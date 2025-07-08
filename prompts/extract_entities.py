@@ -8,10 +8,10 @@ from langchain_core.prompts import (
     HumanMessagePromptTemplate,
 )
 
-
+# Entities matching
 def extract_entities(
     rule_json: Dict,
-    objects: List[Tuple[int, str, str]],
+    user_defined_types: List[str],
     client,
     model: str = "gpt-4.1-mini-2025-04-14"
 ) -> Dict:
@@ -25,36 +25,33 @@ def extract_entities(
     """
     # Prepare serialized inputs
     checks_str = json.dumps(rule_json.get("checks", []), indent=2, ensure_ascii=False)
-    objects_md = "\n".join(
-        f"- id={obj_id}, type={ifc_type}, name={name}"
-        for obj_id, ifc_type, name in objects
-    )
+    user_defined_types_md = "\n".join(f"- {t}" for t in sorted(set(user_defined_types)))
 
     # Full task prompt (unchanged)
     prompt_text = """
         <task>
-        You will map each *reference* / *against* entry in the supplied checks to
-        actual objects (by id) or IFC-type categories from <available_objects>.
+        Map every *reference* and *against* entry in <checks> to one or more object
+        types chosen **only** from <available_objects>.
 
-        Rules
-        • If "type" == "object": find EVERY object whose *name* or *ifc_type* matches
-          logically (synonyms allowed, case-insensitive).  Return their ids in
-          "reference_ids" or "against_ids".
-        • If "type" == "category": choose the most appropriate IFC type or types that
-          represent that category and add:
-             "against_ifc_types": ["<IfcType1>", "<IfcType2>", ...]
-          (or "reference_ifc_types" if the category is in the reference field).
-          You may include multiple IFC types if more than one class is relevant.
+        Matching rules
+        • For values whose "type" is either **"object"** or **"category"**, add
+          `"reference_ifc_types"` / `"against_ifc_types"` containing **all** object types
+          from <available_objects> that logically match that value (synonyms and
+          common usage allowed, case-insensitive).  Include multiple types whenever
+          more than one class is relevant.
+        • If "type" is "any"   ⟶  set the field to ["any"] (meaning all types).
 
-        • Matching is logical, not literal.  Example: "fire extinguisher" should match
-          any object named like "Extg_01" or type that denotes
-          extinguishers in the dataset.
-        • Do not invent ids or IFC types that are not in <available_objects>.
-        • Preserve every other field unchanged.
-        • Return valid JSON only (no markdown, code fences, or extra keys).
-        • For the ‘any object’ category, don’t enumerate individual IDs—just return ‘all IDs’.
+        Constraints
+        • Use **only** the IFC types listed in <available_ifc_types>.
+          Never invent new strings.
+        • Err on the side of inclusion: when unsure, keep a broader set rather
+          than a restrictive one.
+        • Leave all other fields unchanged.
+        • Return **valid JSON only** (no markdown, code fences, or extra keys).
         </task>
         """
+    #• Err on the side of inclusion: when unsure, keep a broader set rather
+    #      than a restrictive one.
 
     # Build the prompt template
     prompt_template = ChatPromptTemplate(
@@ -64,7 +61,7 @@ def extract_entities(
             HumanMessagePromptTemplate.from_template(
                 prompt_text +
                 "\n<checks>\n{checks_str}\n</checks>\n\n"
-                "<available_objects>\n{objects_md}\n</available_objects>"
+                "<available_objects>\n{user_defined_types_md}\n</available_objects>"
             ),
         ],
     )
@@ -72,7 +69,7 @@ def extract_entities(
     # Format and call LLM
     rendered = prompt_template.format_prompt(
         checks_str=checks_str,
-        objects_md=objects_md
+        user_defined_types_md=user_defined_types_md
     ).to_messages()
     result = client.invoke(rendered, model=model)
 
@@ -80,6 +77,8 @@ def extract_entities(
     content = getattr(result, "content", str(result)).strip()
     if content.startswith("```"):
         content = re.sub(r"```json\s*|```", "", content, flags=re.IGNORECASE).strip()
+
+    #print(content)
 
     # Parse and return
     return json.loads(content)

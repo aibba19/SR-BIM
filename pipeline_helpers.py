@@ -86,7 +86,7 @@ def fetch_types_and_names(
         # Print and write each row
         for obj_id, obj_type, obj_name in rows:
             line = line_template.format(id=obj_id, type=obj_type, name=obj_name)
-            print(line.rstrip())
+            #print(line.rstrip())
             if writer:
                 writer.write(line)
 
@@ -127,6 +127,7 @@ def load_objects_and_maps() -> Tuple[List[Tuple[int, str, str]], Dict[int, Tuple
     print("DEBUG: Built ID→object and type→IDs maps.\n")
     return all_objects, id_to_obj, all_ids, type_to_ids
 
+'''
 def execute_spatial_calls(
     plan: Dict,
     id_to_obj: Dict[int, Tuple[str, str]],
@@ -238,3 +239,248 @@ def execute_spatial_calls(
 
     print(f"DEBUG: Collected {len(results)} relations (use_positive={use_positive}).\n")
     return results
+'''
+
+
+def execute_spatial_calls(
+    plan: Dict,
+    all_objects: List[Tuple[int, str, str]],
+    template_paths: Dict[str, Path],
+    log_file,
+    udt_to_ids: Dict[str, List[int]],
+) -> List[Dict]:
+    """
+    Execute spatial calls (SQL templates) for each entry in the plan,
+    using a provided udt_to_ids map to expand any IFC-type UDTs into real object IDs.
+
+    Args:
+      plan: the spatial_plan dict (with plans[*].reference_ifc_types / against_ifc_types)
+      all_objects: list of tuples (id, ifc_type, name)
+      template_paths: mapping from template name to .sql Path
+      log_file: open file handle for debugging
+      udt_to_ids: dict mapping each UDT string → list of matching object IDs
+
+    Returns:
+      A list of result dicts for those object pairs that expose a violation
+      (i.e. held == use_positive).
+    """
+
+    # Build quick lookup from ID to (type,name)
+    id_to_obj = {oid: (ifc, name) for oid, ifc, name in all_objects}
+
+    conn = get_connection()
+    results: List[Dict] = []
+
+    for entry in plan.get("plans", []):
+        idx          = entry["check_index"]
+        use_positive = entry.get("use_positive", True)
+        print(f"DEBUG: check_index={idx}, use_positive={use_positive}")
+
+        for tmpl in entry["templates"]:
+            tpl_name = tmpl["template"]
+            a_src, b_src = tmpl["a_source"], tmpl["b_source"]
+
+            # Expand reference IDs
+            if a_src == "reference_ifc_types":
+                # flatten the lists of IDs for each UDT
+                a_ids = [
+                    oid
+                    for udt in entry["reference"].get("reference_ifc_types", [])
+                    for oid in udt_to_ids.get(udt, [])
+                ]
+            else:  # any_nearby or reference_ids
+                # if they provided explicit reference_ids, use them; otherwise all IDs
+                a_ids = entry["reference"].get("reference_ids", list(id_to_obj))
+
+            # Expand against IDs
+            if b_src == "against_ifc_types":
+                b_ids = [
+                    oid
+                    for udt in entry["against"].get("against_ifc_types", [])
+                    for oid in udt_to_ids.get(udt, [])
+                ]
+            else:  # any_nearby or against_ids
+                b_ids = (
+                    entry["against"].get("against_ids", list(id_to_obj))
+                    if b_src == "against_ids"
+                    else list(id_to_obj)
+                )
+
+            for a_id in a_ids:
+                a_type, a_name = id_to_obj[a_id]
+                for b_id in b_ids:
+                    if a_id == b_id:
+                        continue
+                    b_type, b_name = id_to_obj[b_id]
+
+                    call = {
+                        "type":     "template",
+                        "template": tpl_name,
+                        "a_id":     a_id,
+                        "b_id":     b_id
+                    }
+
+                    # --- log the call ---
+                    log_file.write("=== SPATIAL CALL ===\n")
+                    log_file.write(json.dumps(call, ensure_ascii=False) + "\n")
+
+                    resp = run_spatial_call(conn, call, template_paths)
+
+                    # --- log the result ---
+                    log_file.write("RESULT:\n")
+                    log_file.write(json.dumps(resp, ensure_ascii=False) + "\n\n")
+                    log_file.flush()
+
+                    # --- interpret held vs. not-held ---
+                    held = False
+                    relation_value = None
+                    rows = resp.get("rows", [])
+                    if rows:
+                        first = rows[0]
+                        if tpl_name == "touches":
+                            held = bool(first[0])
+                            relation_value = first[1]
+                        elif tpl_name in {"front", "left", "right", "behind", "above", "below"}:
+                            held = bool(first[3])
+                            if held:
+                                relation_value = first[4]
+                        elif tpl_name in {"near", "far"}:
+                            is_near = bool(first[2])
+                            is_far  = bool(first[3])
+                            held = is_near if tpl_name == "near" else is_far
+                            if held:
+                                relation_value = first[0]
+                        elif tpl_name == "contains":
+                            # rows[0] is (relation_text, is_contained, is_not_contained)
+                            is_contained = bool(first[1])
+                            held = is_contained
+                            if held:
+                                relation_value = first[0]
+
+                        else:
+                            # composed relations should return (flag, text)
+                            held = bool(first[0])
+                            if len(first) > 1:
+                                relation_value = first[1]
+
+                    # save only matches that expose a violation
+                    if held == use_positive:
+                        results.append({
+                            "check_index":    idx,
+                            "template":       tpl_name,
+                            "a_id":           a_id,
+                            "a_name":         a_name,
+                            "a_type":         a_type,
+                            "b_id":           b_id,
+                            "b_name":         b_name,
+                            "b_type":         b_type,
+                            "relation_value": relation_value
+                        })
+
+    print(f"DEBUG: Collected {len(results)} results matching use_positive.\n")
+    return results
+
+def extract_user_defined_types(
+    elements: List[Tuple[int, str, str]]
+) -> List[str]:
+    """
+    Extracts and returns a list of unique user-defined types from a list of IFC elements.
+    Also writes each user-defined type to a file named 'user_defined_type' inside the 'outputs_results' folder.
+
+    Args:
+        elements: list of tuples (index, ifc_type, instance_str), where
+            - index (int): numeric identifier
+            - ifc_type (str): IFC type (e.g., "IfcDoor")
+            - instance_str (str): string in the format "prefix[:display][:id]"
+
+    Returns:
+        List[str]: list of unique user-defined types, formatted as
+                   "IfcType_prefix" or "IfcType_prefix_display"
+    """
+    udts = []
+    for idx, ifc_type, inst_str in elements:
+        segs = inst_str.split(':')
+        if len(segs) == 3:
+            prefix, display, _ = segs
+        elif len(segs) == 2:
+            prefix, _ = segs
+            display = ""
+        else:
+            prefix = segs[0]
+            display = ""
+        
+        prefix = prefix.strip()
+        display = display.strip()
+        combined = f"{prefix}_{display}" if display else prefix
+        udt = f"{ifc_type.strip()}_{combined}"
+        
+        if udt not in udts:
+            udts.append(udt)
+    
+    # Ensure output directory exists
+    os.makedirs('outputs_results', exist_ok=True)
+    # Write each user-defined type to file
+    file_path = os.path.join('outputs_results', 'user_defined_type')
+    with open(file_path, 'w', encoding='utf-8') as f:
+        for udt in udts:
+            f.write(f"{udt}\n")
+    
+    return udts
+
+
+
+def ids_from_udts(
+    udts: List[str],
+    all_objects: List[Tuple[int, str, str]]
+) -> Dict[str, List[int]]:
+    """
+    For each user‐defined type (UDT), return the list of object IDs whose
+    IFC type and name match.  A UDT is formatted like:
+       "<IfcType>_<name segments joined by '_'>"
+    whereas real object names use ':' to separate the last ID.
+    We normalize real names by replacing ':' with '_', then require that
+    all segments of the UDT after the first '_' appear in that normalized name.
+
+    Args:
+      udts:        list of user‐defined types, e.g.
+                   "IfcBuildingElementProxy_Fire_Safety-..._EX-3002"
+      all_objects: list of tuples (id, ifc_type, name), where name is
+                   the DB string with colons, e.g.
+                   "Fire_Safety-...:EX-3002:323036"
+
+    Returns:
+      A dict mapping each UDT → list of matching object IDs.
+    """
+    mapping: Dict[str, List[int]] = {}
+    # Pre‐normalize all object names once
+    normalized = {
+        oid: o_name.replace(":", "_")
+        for oid, _, o_name in all_objects
+    }
+
+    for udt in udts:
+        # if the UDT is literally "any", treat as wildcard → all IDs
+        if udt.lower() == "any":
+            mapping[udt] = [oid for oid, _, _ in all_objects]
+            continue
+
+        # Split off the ifc_type from the rest
+        if "_" not in udt:
+            mapping[udt] = []
+            continue
+        ifc_type, key = udt.split("_", 1)
+        # Break the key into segments that must all appear in the normalized name
+        segments = [seg for seg in key.split("_") if seg]
+
+        matched_ids: List[int] = []
+        for oid, o_ifc, _ in all_objects:
+            if o_ifc != ifc_type:
+                continue
+            norm_name = normalized[oid]
+            # require all pieces to appear
+            if all(seg in norm_name for seg in segments):
+                matched_ids.append(oid)
+
+        mapping[udt] = matched_ids
+
+    return mapping

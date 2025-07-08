@@ -157,12 +157,22 @@ def run_spatial_call(
             tpl_key = call["template"]
 
             # 4-param directionals
-            if tpl_key in {"above", "below", "front", "behind", "left", "right"}:
+            if tpl_key in {"front", "behind", "left", "right"}:
                 rows = run_template_query4(
                     conn,
                     template_paths[tpl_key],
                     call["b_id"],                   # x_id (tested)
                     call["a_id"],                   # y_id (reference)
+                    call.get("camera_id", camera_default),
+                    call.get("s", s_default),
+                )
+            
+            if tpl_key in {"above", "below"}:
+                rows = run_template_query4(
+                    conn,
+                    template_paths[tpl_key],
+                    call["a_id"],                   # x_id (tested)
+                    call["b_id"],                   # y_id (reference)
                     call.get("camera_id", camera_default),
                     call.get("s", s_default),
                 )

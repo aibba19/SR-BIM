@@ -53,12 +53,12 @@ def summarise_spatial_results(
               }}
 
         --------------------------------------------------------------------
-        Your task – produce **one compact sentence per check_index**:
+        Your task – produce **one summary per check_index**:
 
         A.  First clause: restate the check summary (reference targets, template list,  
             polarity) so a reader remembers what was tested.
 
-        B.  For **every reference object / IFC-type mentioned in the check summary**:
+        B.  For **every reference object mentioned in the check summary**:
 
             • If at least one result row exists (same check_index and a_id / a_type),
               list **every** target object, using the supplied *relation_value* text

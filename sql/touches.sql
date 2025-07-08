@@ -12,7 +12,7 @@ y AS (
   WHERE id = %s
 )
 SELECT
-  (ST_3DDWithin(x.bbox, y.bbox, 0.1))::int AS touches_flag,
+  (ST_3DDWithin(x.bbox, y.bbox, 0.05))::int AS touches_flag,
   x.name || ' (ID:' || x.id || ') touches ' ||
   y.name || ' (ID:' || y.id || ')'      AS relation
 FROM x, y;

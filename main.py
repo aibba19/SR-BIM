@@ -1,4 +1,5 @@
-﻿from typing import Any, Dict, Optional, List, Literal, TypedDict
+﻿from optparse import Option
+from typing import Any, Dict, Optional, List, Literal, TypedDict
 from langgraph.graph import END, StateGraph, START
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
@@ -44,18 +45,19 @@ TEMPLATE_PATHS = {
 }
 
 TEMPLATE_CATALOGUE = {
-    "touches": "True when two object bounding boxes are ≤ 0.1 m apart or intersect.",
-    "front": "True when A is in front of B, within a small distance threshold.",
-    "behind": "True when A is behind B, relative to the camera point of view, within a small threshold.",
-    "left": "True when A is to the left of B, within a small distance threshold.",
-    "right": "True when A is to the right of B, within a small distance threshold.",
-    "above": "True when A is above B, within a small distance threshold.",
-    "below": "True when A is below B, within a small distance threshold.",
-    "on_top_of": "True when A is placed directly on top of B.",
-    "leans_on": "True when A is supported by B.",
+    "touches":    "True when two object bounding boxes are ≤ 0.1 m apart or intersect.",
+    "front":      "True when A is in front of B, within a small distance threshold.",
+    "behind":     "True when A is behind B, relative to the camera point of view, within a small threshold.",
+    "left":       "True when A is to the left of B, within a small distance threshold.",
+    "right":      "True when A is to the right of B, within a small distance threshold.",
+    "above":      "True when A is above B, within a small distance threshold.",
+    "below":      "True when A is below B, within a small distance threshold.",
+    "on_top_of":  "True when A is placed directly on top of B.",
+    "leans_on":   "True when A is supported by B.",
     "affixed_to": "True when A is affixed to B.",
-    "near": "True when the distance between A and B is less than a defined threshold.",
-    "far": "True when the distance between A and B is greater than a defined threshold."
+    "near":       "True when the distance between A and B is less than a defined threshold.",
+    "far":        "True when the distance between A and B is greater than a defined threshold.",
+    "contains":   "True when A’s bounding box is completely contained within B’s bounding box."
 }
 
 def prepare_template_paths() -> Dict[str, Path]:
@@ -79,6 +81,9 @@ class PipeState(TypedDict):
     all_ids:     Optional[List[int]]
     type_to_ids: Optional[Dict[str, List[int]]]
 
+    user_defined_types :Optional[List[str]]
+    udt_to_ids: Optional[dict]
+
     enriched_checks: Optional[dict]
     spatial_plan: Optional[dict]
     relations: Optional[Any]
@@ -99,7 +104,8 @@ class Evaluate_Hs_Rule:
 
         workflow.add_node("decompose rule", self.decompose_rule)
         workflow.add_node("load objects", self.load_objects)
-        workflow.add_node("enrich checks", self.enrich_checks)
+        workflow.add_node("create user defined types", self.extract_user_defined_types)
+        workflow.add_node("entity matching", self.entities_matching)
         workflow.add_node("spatial plan", self.spatial_plan)
         workflow.add_node("decide polarity", self.decide_polarity)
         workflow.add_node("execute planned relations", self.execute_planned_relations)
@@ -107,9 +113,10 @@ class Evaluate_Hs_Rule:
         workflow.add_node("evaluate rule", self.evaluate_rule)
 
         workflow.add_edge(START,"load objects")
-        workflow.add_edge("load objects", "decompose rule" )
-        workflow.add_edge("decompose rule", "enrich checks")
-        workflow.add_edge("enrich checks", "spatial plan")
+        workflow.add_edge("load objects", "create user defined types" )
+        workflow.add_edge("create user defined types", "decompose rule" )
+        workflow.add_edge("decompose rule", "entity matching")
+        workflow.add_edge("entity matching", "spatial plan")
         workflow.add_edge("spatial plan", "decide polarity")
         workflow.add_edge("decide polarity", "execute planned relations")
         workflow.add_edge("execute planned relations", "summarise results")
@@ -132,10 +139,20 @@ class Evaluate_Hs_Rule:
         state["type_to_ids"] = type2ids
         return state
 
-    def enrich_checks(self, state: PipeState) -> PipeState:
+    def extract_user_defined_types(self, state:PipeState) -> PipeState:
+        user_defined_types_list = extract_user_defined_types(state["all_objects"])
+        state["user_defined_types"] = user_defined_types_list
+
+        # 2) compute udt_to_ids once:
+        udt_to_ids = ids_from_udts(user_defined_types_list, state["all_objects"])
+        state["udt_to_ids"] = udt_to_ids
+
+        return state
+
+    def entities_matching(self, state: PipeState) -> PipeState:
         enriched = extract_entities(
             state["decomposed_checks"],
-            state["all_objects"],
+            state["user_defined_types"],
             self.llm
         )
         state["enriched_checks"] = enriched
@@ -165,11 +182,10 @@ class Evaluate_Hs_Rule:
         with open(log_path, "w", encoding="utf-8") as log_file:
             relations = execute_spatial_calls(
                 state["spatial_plan"],
-                state["id_to_obj"],
-                state["type_to_ids"],
-                state["all_ids"],
+                state["all_objects"],
                 template_paths,
-                log_file
+                log_file,
+                state["udt_to_ids"]
             )
         state["relations"] = relations
         return state
@@ -238,13 +254,11 @@ class Evaluate_Hs_Rule:
 
 if __name__ == "__main__":
     # ————— Define your checks ————— 
-    
     rules = {
-        "extinguisher_check1": "Are all portable fire extinguishers readily accessible and not restricted by stored items?",
-        "extinguisher_check2": "Are portable fire extinguishers either securely wall mounted or on a supplied stand?",
-        "extinguisher_check3": "Are portable fire extinguishers clearly labelled?",
-        "ignition_check":      "Have combustible materials been stored away from sources of ignition?",
+         "fire_escape_check1":  "Are fire exit signs installed at the proper locations and remain clearly visible?",
+    
     }
+    
 
     # Prepare output directory
     outputs_dir = Path(__file__).parent / "outputs_results"
@@ -259,7 +273,7 @@ if __name__ == "__main__":
         print(f"DEBUG: Processing rule '{name}'...")
         results = validator.run_hs_rule_validator(text)
         # Filter out large fields
-        filtered = {k: v for k, v in results.items() if k not in ("all_objects", "all_ids","id_to_obj","type_to_ids")}
+        filtered = {k: v for k, v in results.items() if k not in ("all_objects", "all_ids","id_to_obj","type_to_ids","user_defined_types","udt_to_ids")}
         # Per-rule output file
         rule_file = outputs_dir / f"{name}.json"
         print(f"DEBUG: Writing results for '{name}' to {rule_file}.")
@@ -276,7 +290,7 @@ if __name__ == "__main__":
 
     print("Done! Individual rule outputs and final summary written to 'outputs_results'.")
 
-    '''
+    
 
     # Render and save workflow visualization
     graph = validator.chain.get_graph()
@@ -285,7 +299,7 @@ if __name__ == "__main__":
     with open(viz_path, "wb") as viz_file:
         viz_file.write(png_bytes)
     print(f"DEBUG: Workflow diagram saved to {viz_path}")
-    '''
+    
 
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -293,20 +307,26 @@ if __name__ == "__main__":
 # ──────────────────────────────────────────────────────────────────────────
 
 '''
-    # ————— Define your checks —————
-    rules = {
-        "waste_check":         "Is waste and rubbish kept in a designated area?", # Da aggiungere oggetto area
-        "fire_call_check":     "Are all fire alarm call points clearly signed and easily accessible?", # si può fare facile
-        "fire_escape_check1":  "Are all fire exit signs in place and unobstructed?", # si può fare facile
-        "fire_escape_check2":  "Are fire escape routes kept clear?", # da aggiungere fire escape routes come oggetto
-        "fall_check":          "Is the condition of all flooring free from trip hazards?", # da aggiungere routes come oggetto
-        "door_check":          "Are fire doors kept closed, i.e., not wedged open?", # Da aggiungere attributo a porte
-
-
-        "extinguisher_check1": "Are portable fire extinguishers clearly labelled?", # si può fare facile +
-        "extinguisher_check2": "Are all portable fire extinguishers readily accessible and not restricted by stored items?", # Fatto +
-        "extinguisher_check3": "Are portable fire extinguishers either securely wall mounted or on a supplied stand?" # Fatto +
-        "ignition_check":      "Have combustible materials been stored away from sources of ignition?", # Fatto da integrare +
-    }
     
+    rules = {
+        
+        #TUTTE RIISOLTE CORRETTAMENTE
+        "extinguisher_check1": "Are all portable fire extinguishers readily accessible and not restricted by stored items?",
+        "extinguisher_check2": "Are portable fire extinguishers either securely wall mounted or on a supplied stand?",
+        "extinguisher_check3": "Are portable fire extinguishers clearly labelled?",
+        "fire_call_check": "Are all fire alarm call points clearly signed and easily accessible?",
+        "fire_escape_check1":  "Are fire exit signs installed at the proper locations and remain clearly visible?", 
+        "fire_escape_check2":  "Are fire escape routes kept clear?", 
+        "waste_check":         "Is waste and rubbish kept in a designated area?",
+
+        #Corrette con qualche possibile misinterpretazione a volte
+        "ignition_check":      "Have combustible materials been stored away from sources of ignition?", 
+
+        #Questa rende cose sbagliate 
+        "fall_check":          "Is the condition of all flooring free from trip hazards?", -> "Which objects placed on the floor could be considered potential trip hazards?"
+        "door_check":          "Are fire doors kept closed, i.e., not wedged open?",
+        
+                                                                                                        
+    }
+
     '''

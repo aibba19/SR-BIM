@@ -33,46 +33,53 @@ def evaluate_rule(
         You must judge whether a health-and-safety rule is met, using only the
         spatial-query *summaries* provided.
 
-        ●  The summaries already tell you  
-           – which reference objects were tested,  
-           – which other objects are (or are not) in the stated spatial relations,  
-           – and, by omission, which reference objects produced **no** matches.
+        ● Each summary describes:
+           – which reference objects were tested,
+           – which other objects are (or are not) in specific spatial relations,
+           – and, by omission, which reference objects had **no matches** for the relation.
 
-        ●  Treat every spatial result as geometrically correct, but feel free to doubt
-           whether the named objects really matter for the rule.  If something seems
-           mismatched or unclear, say so.
+        ● Treat every spatial result as geometrically correct, but you may question the
+          relevance of specific objects to the rule. If a match seems questionable or
+          misaligned with the rule intent, describe the issue.
 
-        For **each** summary:
-          1. Decide  
-                compliant   - the rule is satisfied for this case  
-                violated    - the rule is broken (cite the objects)  
-                undetermined- not enough information / object-type doubt
-          2. Give a detailed explanation of the decision.  
-             • If violated, list the object IDs / types that cause the breach.  
-             • If uncertain, name the objects and state why (ambiguous type, etc.).
+        Instructions:
 
-        Absence counts: if a reference object appears in the summary header but has
-        no relation lines, infer the opposite relation held and use that evidence.
+        1. For **each** summary:
+           – Write a clear and concise **explanation** of what the summary shows in relation to
+             the rule. Describe:
+               • Which reference objects satisfy the condition,
+               • Which violate it,
+               • Which may be in doubt (and why: unclear naming, ambiguous role, etc.).
+           – When citing objects, always use both the **original name and ID** (e.g., `"Extg_03" (ID=107)`), especially when highlighting violations or unclear situations.
+           – Do **not** assign a compliance label per summary—just explain the relevant facts
+             in relation to the rule.
 
-        Finally give an overall verdict:
-          "overall_compliant" is **true** only when every entry is compliant.
-          Otherwise it is false.
-          In "overall_explanation" combine the reasons, naming any objects that break
-          the rule or remain in doubt.
+           The goal is to expose:
+             – violations (who breaks the rule, and how),
+             – satisfying cases (who is fine and why),
+             – uncertainties (who/what needs follow-up and why).
 
-        Return valid **JSON only** in exactly this shape:
+        2. Use these explanations to give a final judgment:
+
+           "overall_compliant" is **true** only if no object violates the rule and all
+           ambiguities are minor or irrelevant.
+
+           In "overall_explanation", combine the evidence from the summaries. Cite object
+           **names and IDs** that cause violations or raise doubt, and explain why the rule
+           is or isn’t respected overall.
+
+        Return valid **JSON only**, in exactly this shape:
 
         {{
           "entry_results": [
             {{
               "summary": "<original summary>",
-              "compliant": true | false | null,
               "explanation": "<short reason>"
             }},
             …
           ],
           "overall_compliant": true | false,
-          "overall_explanation": "<concise overall reason>"
+          "overall_explanation": "<Overall reason>"
         }}
         </task_description>
         """

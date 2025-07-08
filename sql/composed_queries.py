@@ -494,7 +494,8 @@ def affixed_to_relation(object1_id, object2_id, camera_id, scale_factor):
         conn.close()
         return relation_flag, "\n".join(explanation)
 
-    # Step 3: Verify NO other o₃ touches o₂ using ST_3DDWithin (0.1 m tolerance)
+    #Step 3: Verify NO other o₃ touches o₂ within 0.1 m, and only consider IfcSlab because 
+    #IfcSlab: classe per elementi orizzontali piani con PredefinedType (FLOOR, ROOF, LANDING, BASESLAB, PAVING, ecc.)
     no_other_sql = """
     WITH x AS (
       SELECT bbox
@@ -507,6 +508,7 @@ def affixed_to_relation(object1_id, object2_id, camera_id, scale_factor):
         FROM room_objects AS o3, x
         WHERE o3.id NOT IN (%s, %s)
           AND ST_3DDWithin(x.bbox, o3.bbox, 0.1)
+          AND o3.ifc_type = 'IfcSlab'
       )
     )::int
     """
