@@ -7,6 +7,7 @@ import yaml
 from dotenv import load_dotenv
 from db_utils import *
 from psycopg2 import sql
+from collections import defaultdict
 
 load_dotenv()
 
@@ -127,120 +128,6 @@ def load_objects_and_maps() -> Tuple[List[Tuple[int, str, str]], Dict[int, Tuple
     print("DEBUG: Built ID→object and type→IDs maps.\n")
     return all_objects, id_to_obj, all_ids, type_to_ids
 
-'''
-def execute_spatial_calls(
-    plan: Dict,
-    id_to_obj: Dict[int, Tuple[str, str]],
-    type_to_ids: Dict[str, List[int]],
-    all_ids: List[int],
-    #conn,
-    template_paths: Dict[str, Path],
-    log_file
-) -> List[Dict]:
-    """
-    Execute spatial calls (SQL templates) for each entry in the plan, logging and collecting
-    either positive or negative relations according to the entry's `use_positive` flag.
-
-    Now reads `use_positive` from each plan entry:
-      - If True, collects only held==True relations (as before).
-      - If False, collects only held==False relations.
-    """
-    print("DEBUG: Executing spatial calls for each planned relation...")
-   
-    conn = get_connection()
-    results: List[Dict] = []
-
-    # Iterate through each planned check entry
-    for entry in plan.get("plans", []):
-        idx          = entry["check_index"]
-        use_positive = entry.get("use_positive", True)
-        print(f"DEBUG: check_index={idx}, use_positive={use_positive}")
-
-        for tmpl in entry["templates"]:
-            tpl_name = tmpl["template"]
-            a_src, b_src = tmpl["a_source"], tmpl["b_source"]
-
-            # Determine reference IDs (a_ids)
-            if a_src == "reference_ids":
-                a_ids = entry["reference"]["reference_ids"]
-            elif a_src == "reference_ifc_types":
-                a_ids = [
-                    oid
-                    for t in entry["reference"].get("reference_ifc_types", [])
-                    for oid in type_to_ids.get(t, [])
-                ]
-            else:  # any_nearby
-                a_ids = entry["reference"]["reference_ids"]
-
-            # Determine against IDs (b_ids)
-            if b_src == "against_ids":
-                b_ids = entry["against"]["against_ids"]
-            elif b_src == "against_ifc_types":
-                b_ids = [
-                    oid
-                    for t in entry["against"].get("against_ifc_types", [])
-                    for oid in type_to_ids.get(t, [])
-                ]
-            else:  # any_nearby
-                b_ids = all_ids
-
-            # Run the spatial function 1-to-1 for each pair
-            for a_id in a_ids:
-                a_type, a_name = id_to_obj[a_id]
-                for b_id in b_ids:
-                    if a_id == b_id:
-                        continue
-
-                    b_type, b_name = id_to_obj[b_id]
-                    call = {"type":"template","template":tpl_name,"a_id":b_id,"b_id":a_id}
-
-                    # Log request
-                    log_file.write("=== SPATIAL CALL ===\n")
-                    log_file.write(json.dumps(call, ensure_ascii=False) + "\n")
-
-                    result = run_spatial_call(conn, call, template_paths)
-
-                    # Log result
-                    log_file.write("RESULT:\n")
-                    log_file.write(json.dumps(result, ensure_ascii=False) + "\n\n")
-                    log_file.flush()
-
-                    # Determine held
-                    held = False
-                    rows = result.get("rows", [])
-                    relation_value = None
-                    if rows:
-                        first = rows[0]
-                        # Here every query should be stantardized for optimization so the output can be accessed in the same way
-                        if tpl_name == "touches":
-                            held = bool(first[0]);       relation_value = first[1]
-                        elif tpl_name in {"front","left","right","behind","above","below"}:
-                            held = bool(first[3]);       relation_value = first[4] if held else None
-                        elif tpl_name in {"near","far"}:
-                            is_near = bool(first[2]);    is_far = bool(first[3])
-                            held = is_near if tpl_name=="near" else is_far
-                            relation_value = first[0]
-                        else:  # composed relations
-                            held = bool(first[0]);       relation_value = first[1] if len(first)>1 else None
-
-                    # Record only if held matches use_positive
-                    if held == use_positive:
-                        results.append({
-                            "check_index":    idx,
-                            "template":       tpl_name,
-                            "a_id":           a_id,
-                            "a_name":         a_name,
-                            "a_type":         a_type,
-                            "b_id":           b_id,
-                            "b_name":         b_name,
-                            "b_type":         b_type,
-                            "relation_value": relation_value
-                        })
-
-    print(f"DEBUG: Collected {len(results)} relations (use_positive={use_positive}).\n")
-    return results
-'''
-
 
 def execute_spatial_calls(
     plan: Dict,
@@ -248,6 +135,11 @@ def execute_spatial_calls(
     template_paths: Dict[str, Path],
     log_file,
     udt_to_ids: Dict[str, List[int]],
+    pov_id: int,
+    extrusion_factor_s: int,
+    tolerance_metre: float,
+    near_far_threshold: float,
+
 ) -> List[Dict]:
     """
     Execute spatial calls (SQL templates) for each entry in the plan,
@@ -324,7 +216,7 @@ def execute_spatial_calls(
                     log_file.write("=== SPATIAL CALL ===\n")
                     log_file.write(json.dumps(call, ensure_ascii=False) + "\n")
 
-                    resp = run_spatial_call(conn, call, template_paths)
+                    resp = run_spatial_call(conn, call, template_paths, pov_id, extrusion_factor_s, tolerance_metre, near_far_threshold)
 
                     # --- log the result ---
                     log_file.write("RESULT:\n")
@@ -351,11 +243,11 @@ def execute_spatial_calls(
                             if held:
                                 relation_value = first[0]
                         elif tpl_name == "contains":
-                            # rows[0] is (relation_text, is_contained, is_not_contained)
-                            is_contained = bool(first[1])
+                            # first = rows[0] = (is contained flag, float percentage contained x in y , phrase explaining relation)
+                            is_contained = bool(first[0])
                             held = is_contained
                             if held:
-                                relation_value = first[0]
+                                relation_value = first[2]
 
                         else:
                             # composed relations should return (flag, text)
@@ -484,3 +376,122 @@ def ids_from_udts(
         mapping[udt] = matched_ids
 
     return mapping
+
+
+def summarize_plan_results_to_list(
+    spatial_plan: Dict[str, Any],
+    results: List[Dict[str, Any]]
+) -> List[str]:
+    """
+    Optimized one-pass summarizer:
+      - Index results by (check_index, a_id, template)
+      - Index plan templates by check_index
+      - For each check_index and each a_id, build clauses via fast dict lookups
+    """
+    # 1) Build result index: (check_index, a_id, template) → list of result dicts
+    idx: Dict[Tuple[int, int, str], List[Dict[str, Any]]] = defaultdict(list)
+    for r in results:
+        key = (r["check_index"], r["a_id"], r["template"])
+        idx[key].append(r)
+
+    # 2) Build plan-template map: check_index → list of templates
+    plan_templates: Dict[int, List[str]] = {
+        entry["check_index"]: [t["template"] for t in entry["templates"]]
+        for entry in spatial_plan.get("plans", [])
+    }
+
+    # Human-readable phrases
+    phrases: Dict[str, str] = {
+        "touches":    "touches",
+        "front":      "is in front of",
+        "behind":     "is behind",
+        "left":       "is to the left of",
+        "right":      "is to the right of",
+        "above":      "is above",
+        "below":      "is below",
+        "near":       "is near",
+        "far":        "is far from",
+        "on_top_of":  "is on top of",  # will be split into two clauses
+        "leans_on":   "leans on",
+        "affixed_to": "is affixed to",
+        "contains":   "contains",      # special: raw relation_value
+    }
+
+    summaries: List[str] = []
+
+    # 3) Identify all (check_index, a_id) pairs
+    check_to_aids: Dict[int, set] = defaultdict(set)
+    for (chk, aid, _), recs in idx.items():
+        check_to_aids[chk].add(aid)
+
+    # 4) Build summaries
+    for chk, a_ids in check_to_aids.items():
+        templates = plan_templates.get(chk, [])
+        for a_id in sorted(a_ids):
+            # -- find a_name by scanning any result for this (chk, a_id)
+            a_name = next(
+                r["a_name"]
+                for r in results
+                if r["check_index"] == chk and r["a_id"] == a_id
+            )
+
+            clauses: List[str] = []
+
+            for tpl in templates:
+                recs = idx.get((chk, a_id, tpl), [])
+
+                # Special: contains → raw relation_value
+                if tpl == "contains":
+                    if recs:
+                        rv = "; ".join(r["relation_value"] for r in recs)
+                        clauses.append(rv)
+                    else:
+                        clauses.append("contains no object")
+                    continue
+
+                # Special: on_top_of → two directional clauses
+                if tpl == "on_top_of":
+                    atop: List[str] = []
+                    beneath: List[str] = []
+                    for r in recs:
+                        rv = r["relation_value"]
+                        if f"(ID:{a_id}) is on top of" in rv:
+                            atop.append(r["b_name"])
+                        else:
+                            beneath.append(r["b_name"])
+                    # build atop clause
+                    if atop:
+                        part = ", ".join(atop[:-1]) + " and " + atop[-1] if len(atop) > 1 else atop[0]
+                        clauses.append(f"is on top of {part}")
+                    else:
+                        clauses.append("is on top of no object")
+                    # build beneath clause
+                    if beneath:
+                        part = ", ".join(beneath[:-1]) + " and " + beneath[-1] if len(beneath) > 1 else beneath[0]
+                        clauses.append(f"has on top of it {part}")
+                    else:
+                        clauses.append("has on top of it no object")
+                    continue
+
+                # Normal relation templates
+                if recs:
+                    b_names = [r["b_name"] for r in recs]
+                    if len(b_names) > 1:
+                        part = ", ".join(b_names[:-1]) + " and " + b_names[-1]
+                    else:
+                        part = b_names[0]
+                    clauses.append(f"{phrases.get(tpl, tpl)} {part}")
+                else:
+                    clauses.append(f"{phrases.get(tpl, tpl)} no object")
+
+            # Compose summary for this (chk, a_id)
+            if clauses:
+                head = f"For Object {a_name} (ID:{a_id}) we found that it {clauses[0]}"
+                tail = "".join(f"; and it {c}" for c in clauses[1:])
+                summary = head + tail + "."
+            else:
+                summary = f"For Object {a_name} (ID:{a_id}) no templates tested."
+
+            summaries.append(summary)
+
+    return summaries

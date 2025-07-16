@@ -4,13 +4,15 @@
 --   2. object_y_id: The target object ID (e.g., Main Door).
 --   3. camera_id: The camera ID.
 --   4. s: The scale factor (e.g., 5 means the halfspace extends 5× the object width).
+--   5. tol: The XY/Z padding tolerance.
 
 WITH params AS (
   SELECT 
     CAST(%s AS INTEGER) AS object_x_id,
     CAST(%s AS INTEGER) AS object_y_id,
     CAST(%s AS INTEGER) AS camera_id,
-    CAST(%s AS NUMERIC) AS s
+    CAST(%s AS NUMERIC) AS s,
+    CAST(%s AS NUMERIC) AS tol
 ),
 -- 1. Camera
 cam AS (
@@ -56,16 +58,17 @@ obj_x_bbox AS (
     FROM obj_x_trans
   ) sub
 ),
--- 6. True Z-range of X in world-space, extended by ±1.5
+-- 6. True Z-range of X in world-space, extended by tolerance
 obj_x_world_z AS (
   SELECT
-    ST_ZMin(bbox)            AS w_minz,
-    ST_ZMax(bbox)            AS w_maxz,
-    ST_ZMin(bbox) - 1      AS w_minz_ext,
-    ST_ZMax(bbox) + 1      AS w_maxz_ext
+    ST_ZMin(bbox)        AS w_minz,
+    ST_ZMax(bbox)        AS w_maxz,
+    ST_ZMin(bbox) - tol  AS w_minz_ext,
+    ST_ZMax(bbox) + tol  AS w_maxz_ext
   FROM obj_x_info
+  CROSS JOIN params
 ),
--- 7. Compute left-halfspace parameters, Y-range also extended by ±1.5
+-- 7. Compute left-halfspace parameters, Y-range also extended by tolerance
 obj_x_metrics AS (
   SELECT
     minx                                     AS left_x,
@@ -73,8 +76,8 @@ obj_x_metrics AS (
     (minx - params.s * (maxx - minx))        AS left_threshold,
     miny                                     AS miny,
     maxy                                     AS maxy,
-    (miny - 1)                             AS miny_ext,
-    (maxy + 1)                             AS maxy_ext
+    (miny - params.tol)                      AS miny_ext,
+    (maxy + params.tol)                      AS maxy_ext
   FROM obj_x_bbox
   CROSS JOIN params
 ),
@@ -115,9 +118,9 @@ flag AS (
 )
 -- 10. Final output with names & IDs
 SELECT
-  (SELECT left_x             FROM obj_x_metrics) AS obj_x_left_x_camera,
-  (SELECT width              FROM obj_x_metrics) AS obj_x_width,
-  (SELECT left_threshold     FROM obj_x_metrics) AS halfspace_threshold_left_camera,
+  (SELECT left_x         FROM obj_x_metrics) AS obj_x_left_x_camera,
+  (SELECT width          FROM obj_x_metrics) AS obj_x_width,
+  (SELECT left_threshold FROM obj_x_metrics) AS halfspace_threshold_left_camera,
   flag.left_flag,
   CASE
     WHEN flag.left_flag = 1 THEN

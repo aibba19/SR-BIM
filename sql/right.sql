@@ -1,9 +1,18 @@
-﻿WITH params AS (
+﻿-- File: right.sql
+-- Parameters:
+--   1. object_x_id: The reference object ID (e.g., Main Bed).
+--   2. object_y_id: The target object ID (e.g., Main Door).
+--   3. camera_id: The camera ID.
+--   4. s: The scale factor (e.g., 5 means the halfspace extends 5× the object width).
+--   5. tol: The XY/Z padding tolerance.
+
+WITH params AS (
   SELECT
-    CAST(%s  AS INTEGER) AS object_x_id,       
-    CAST(%s AS INTEGER) AS object_y_id,       
-    CAST(%s AS INTEGER) AS camera_id,
-    CAST(%s AS NUMERIC) AS s
+    CAST(%s  AS INTEGER) AS object_x_id,
+    CAST(%s  AS INTEGER) AS object_y_id,
+    CAST(%s  AS INTEGER) AS camera_id,
+    CAST(%s  AS NUMERIC) AS s,
+    CAST(%s  AS NUMERIC) AS tol
 ),
 -- 1. Camera
 cam AS (
@@ -49,16 +58,17 @@ obj_x_bbox AS (
     FROM obj_x_trans
   ) sub
 ),
--- 6. True Z-range of X in world-space (extended by ±1)
+-- 6. True Z-range of X in world-space, extended by tolerance
 obj_x_world_z AS (
   SELECT
     ST_ZMin(bbox)        AS w_minz,
     ST_ZMax(bbox)        AS w_maxz,
-    ST_ZMin(bbox) - 1  AS w_minz_ext,
-    ST_ZMax(bbox) + 1  AS w_maxz_ext
+    ST_ZMin(bbox) - tol  AS w_minz_ext,
+    ST_ZMax(bbox) + tol  AS w_maxz_ext
   FROM obj_x_info
+  CROSS JOIN params
 ),
--- 7. Compute "right" halfspace parameters (Y-range extended by ±1)
+-- 7. Compute "right" halfspace parameters, Y-range also extended by tolerance
 obj_x_metrics AS (
   SELECT
     maxx                                           AS right_x,
@@ -66,8 +76,8 @@ obj_x_metrics AS (
     (maxx + params.s * (maxx - minx))              AS right_threshold,
     miny                                           AS miny,
     maxy                                           AS maxy,
-    (miny - 1)                                   AS miny_ext,
-    (maxy + 1)                                   AS maxy_ext
+    (miny - params.tol)                            AS miny_ext,
+    (maxy + params.tol)                            AS maxy_ext
   FROM obj_x_bbox
   CROSS JOIN params
 ),
@@ -87,7 +97,7 @@ obj_y_points AS (
   ) sub
   CROSS JOIN LATERAL ST_DumpPoints(sub.transformed_geom) AS dp
 ),
--- 9. Flag "right" if ANY point lies in the extended 3D prism:
+-- 9. Flag "right" if ANY point lies in the tolerance-padded prism:
 --      X ∈ [right_x, right_threshold]
 --  AND Y ∈ [miny_ext, maxy_ext]
 --  AND Z ∈ [w_minz_ext, w_maxz_ext]
@@ -125,4 +135,3 @@ SELECT
       || ' (ID:' || (SELECT object_x_id FROM params) || ')'
   END AS relation
 FROM flag;
-

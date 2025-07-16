@@ -3,7 +3,8 @@
     CAST(%s AS INTEGER) AS object_x_id,
     CAST(%s AS INTEGER) AS object_y_id,
     CAST(%s AS INTEGER) AS camera_id,
-    CAST(%s AS NUMERIC) AS s
+    CAST(%s AS NUMERIC) AS s,      -- half-space scale factor
+    CAST(%s AS NUMERIC) AS tol     -- XY/Z padding tolerance
 ),
 -- 1. Camera
 cam AS (
@@ -51,29 +52,31 @@ obj_x_bbox AS (
     FROM obj_x_trans
   ) sub
 ),
--- 6. True Z-range of X in world-space, extended by a threshold
+-- 6. True Z-range of X in world-space, extended by tolerance
 obj_x_world_z AS (
   SELECT
     ST_ZMin(bbox)        AS w_minz,
     ST_ZMax(bbox)        AS w_maxz,
-    ST_ZMin(bbox) - 0.5  AS w_minz_ext,
-    ST_ZMax(bbox) + 0.5  AS w_maxz_ext
+    ST_ZMin(bbox) - tol  AS w_minz_ext,
+    ST_ZMax(bbox) + tol  AS w_maxz_ext
   FROM obj_x_info
+  CROSS JOIN params
 ),
--- 7. Compute behind-halfspace parameters, extending X-range and Z-range by ±1
+-- 7. Compute behind-halfspace parameters, extending X-range and Z-range by tolerance
 obj_x_metrics AS (
   SELECT
-    (maxy - miny)                                        AS depth,
-    maxy                                                 AS back_y,
-    (maxy + p.s * (maxy - miny))                         AS behind_threshold,
-    minx                                                 AS minx,
-    maxx                                                 AS maxx,
-    (minx - 0.5)                                         AS minx_ext,
-    (maxx + 0.5)                                         AS maxx_ext,
-    (SELECT w_minz_ext FROM obj_x_world_z)               AS w_minz_ext,
-    (SELECT w_maxz_ext FROM obj_x_world_z)               AS w_maxz_ext
-  FROM obj_x_bbox
-  CROSS JOIN params p
+    (fx.maxy - fx.miny)                             AS depth,
+    fx.maxy                                         AS back_y,
+    (fx.maxy + params.s * (fx.maxy - fx.miny))      AS behind_threshold,
+    fx.minx                                         AS minx,
+    fx.maxx                                         AS maxx,
+    (fx.minx - params.tol)                          AS minx_ext,
+    (fx.maxx + params.tol)                          AS maxx_ext,
+    wz.w_minz_ext                                   AS w_minz_ext,
+    wz.w_maxz_ext                                   AS w_maxz_ext
+  FROM obj_x_bbox fx
+  CROSS JOIN obj_x_world_z wz
+  CROSS JOIN params
 ),
 -- 8. Transform Y into camera-space & dump its 3D points
 obj_y_points AS (
@@ -93,20 +96,20 @@ obj_y_points AS (
   ) sub
   CROSS JOIN LATERAL ST_DumpPoints(sub.transformed_geom) AS dp
 ),
--- 9. Flag “behind” if ANY point lies in the 3D prism:
+-- 9. Flag “behind” if ANY point lies in the tolerance-padded prism:
 --    Y ∈ [back_y, behind_threshold]
--- AND X ∈ [minx_ext, maxx_ext]
--- AND Z ∈ [w_minz_ext, w_maxz_ext]
+--  AND X ∈ [minx_ext, maxx_ext]
+--  AND Z ∈ [w_minz_ext, w_maxz_ext]
 flag AS (
   SELECT
     MAX(
       CASE
-        WHEN ST_Y(pt) BETWEEN (SELECT back_y             FROM obj_x_metrics)
-                         AND (SELECT behind_threshold   FROM obj_x_metrics)
-         AND ST_X(pt) BETWEEN (SELECT minx_ext         FROM obj_x_metrics)
-                         AND (SELECT maxx_ext         FROM obj_x_metrics)
-         AND ST_Z(pt) BETWEEN (SELECT w_minz_ext        FROM obj_x_metrics)
-                         AND (SELECT w_maxz_ext        FROM obj_x_metrics)
+        WHEN ST_Y(pt) BETWEEN (SELECT back_y           FROM obj_x_metrics)
+                         AND (SELECT behind_threshold FROM obj_x_metrics)
+         AND ST_X(pt) BETWEEN (SELECT minx_ext        FROM obj_x_metrics)
+                         AND (SELECT maxx_ext        FROM obj_x_metrics)
+         AND ST_Z(pt) BETWEEN (SELECT w_minz_ext       FROM obj_x_metrics)
+                         AND (SELECT w_maxz_ext       FROM obj_x_metrics)
         THEN 1 ELSE 0
       END
     ) AS behind_flag

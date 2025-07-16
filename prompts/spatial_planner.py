@@ -31,6 +31,7 @@ def spatial_planner(
     )
 
     # Task description (system message)
+    # Task description (system message)
     base_prompt = """
         <task>
         You will decide which template relations must be run for each check.
@@ -42,14 +43,11 @@ def spatial_planner(
 
         Rules
           1. Use only **templates** for every relation.
-             Example: to test "unobstructed_by", run "touches", then
+             Example: to test "unobstructed_by" or visibility related to an object, run "touches", then
              "front/right/left/behind/above/below".
 
-             General guidance: When trying to understand **where an object is placed** or **how it relates spatially to others**, 
-               it is often necessary to test **multiple spatial relations** to capture the full 
-               surrounding context. Therefore, it is recommended to include **a broader set of spatial templates and object targets** 
-               rather than a minimal set. This ensures more robust results and reduces the risk of missing relevant spatial conditions. 
-               Including *more* relations and tested objects is preferred over *too few*.
+             to test if a door it's open check containment against walls.
+             To check if there is object on ifc spaces just check on top relation
 
           2. When "against" or "reference" has "type":"any", indicate
                "b_source": "any_nearby"   or "a_source": "any_nearby"
@@ -83,6 +81,13 @@ def spatial_planner(
         }}
         </task>
         """
+    '''
+        General guidance: When trying to understand **where an object is placed** or **how it relates spatially to others**, 
+               it is often necessary to test **multiple spatial relations** to capture the full 
+               surrounding context. Therefore, it is recommended to include **a broader set of spatial templates and object targets** 
+               rather than a minimal set. This ensures more robust results and reduces the risk of missing relevant spatial conditions. 
+               Including *more* relations and tested objects is preferred over *too few*.
+        '''
 
     # Build prompt template
     prompt_template = ChatPromptTemplate(

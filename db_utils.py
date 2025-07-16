@@ -113,8 +113,8 @@ def _template_query(conn, template_file: str | Path, params: Tuple[Any, ...]):
     return run_query(conn, sql_text, params)
 
 
-def run_template_query4(conn, tpl, x, y, camera, s):
-    return _template_query(conn, tpl, (x, y, camera, s))
+def run_template_query4(conn, tpl, x, y, camera, s, tolerance_metre):
+    return _template_query(conn, tpl, (x, y, camera, s, tolerance_metre))
 
 
 def run_template_query3(conn, tpl, id1, id2, thresh):
@@ -126,14 +126,17 @@ def run_template_query2(conn, tpl, id1, id2):
 
 
 # ---------------------------------------------------------------------------
-# Master executor (unchanged interface – simpler load_query usage)
+# Master executor
 # ---------------------------------------------------------------------------
 def run_spatial_call(
     conn,
     call: dict,
     template_paths: dict,
-    camera_default: int = 1,
-    s_default: int = 1,
+
+    pov_id: int,
+    extrusion_factor_s: int,
+    tolerance_metre: float,
+    near_far_threshold: float = 1,
 ):
     """
     Execute a single call from plan_spatial_queries(), now using a_id/b_id.
@@ -161,20 +164,22 @@ def run_spatial_call(
                 rows = run_template_query4(
                     conn,
                     template_paths[tpl_key],
-                    call["b_id"],                   # x_id (tested)
-                    call["a_id"],                   # y_id (reference)
-                    call.get("camera_id", camera_default),
-                    call.get("s", s_default),
+                    call["a_id"],                   # x_id (tested)
+                    call["b_id"],                   # y_id (reference)
+                    call.get("camera_id", pov_id),
+                    call.get("s", extrusion_factor_s),
+                    call.get("tol", tolerance_metre)
                 )
             
-            if tpl_key in {"above", "below"}:
+            elif tpl_key in {"above", "below"}:
                 rows = run_template_query4(
                     conn,
                     template_paths[tpl_key],
                     call["a_id"],                   # x_id (tested)
                     call["b_id"],                   # y_id (reference)
-                    call.get("camera_id", camera_default),
-                    call.get("s", s_default),
+                    call.get("camera_id", pov_id),
+                    call.get("s", extrusion_factor_s),
+                    call.get("tol", tolerance_metre)
                 )
 
             # 3-param near/far
@@ -184,11 +189,11 @@ def run_spatial_call(
                     template_paths[tpl_key],
                     call["a_id"],                   # id1
                     call["b_id"],                   # id2
-                    call.get("s", s_default),
+                    call.get("s", near_far_threshold),
                 )
 
             # 2-param touches
-            elif tpl_key == "touches":
+            elif tpl_key in {"touches", "contains"}:
                 rows = run_template_query2(
                     conn,
                     template_paths[tpl_key],
@@ -201,10 +206,10 @@ def run_spatial_call(
                 _import_composed_funcs()
                 func = COMPOSED_FUNCS[tpl_key]
                 result = func(
-                    call["a_id"],
                     call["b_id"],
-                    call.get("camera_id", camera_default),
-                    call.get("s", s_default),
+                    call["a_id"],
+                    call.get("camera_id", pov_id),
+                    call.get("s", extrusion_factor_s),
                 )
                 rows = [result]
 

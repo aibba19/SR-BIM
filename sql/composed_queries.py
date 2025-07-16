@@ -263,7 +263,7 @@ def affixed_to_relation(object2_id, object1_id, scale_factor):
 
 '''
 
-def on_top_relation(object_x_id, object_y_id, camera_id, scale_factor):
+def on_top_relation(object_x_id, object_y_id, camera_id, scale_factor, tolerance_metre= 0.3, near_far_threshold = 1):
     """
     Determines whether one object is on top of another by:
       1) checking 3D touches via touches.sql, and
@@ -288,7 +288,7 @@ def on_top_relation(object_x_id, object_y_id, camera_id, scale_factor):
         above_row = run_query(
             conn,
             above_sql,
-            (object_x_id, object_y_id, camera_id, scale_factor)
+            (object_x_id, object_y_id, camera_id, scale_factor, tolerance_metre)
         )[0]
         # above_row: [top_z, height, above_threshold, above_flag, relation]
         above_flag = above_row[3]
@@ -316,7 +316,7 @@ def on_top_relation(object_x_id, object_y_id, camera_id, scale_factor):
         above_row_rev = run_query(
             conn,
             above_sql,
-            (object_y_id, object_x_id, camera_id, scale_factor)
+            (object_y_id, object_x_id, camera_id, scale_factor, tolerance_metre)
         )[0]
         above_flag_rev = above_row_rev[3]
         relation_rev   = above_row_rev[4]
@@ -345,7 +345,7 @@ def on_top_relation(object_x_id, object_y_id, camera_id, scale_factor):
 
 
 #OPTIMIZED VERSION
-def leans_on_relation(object1_id, object2_id, camera_id, scale_factor):
+def leans_on_relation(object1_id, object2_id, camera_id, scale_factor, tolerance_metre=0.3, near_far_threshold = 1):
     """
     Check if o2 leans on o1
     LeansOn(o₂, o₁, Fc) ⇔ 
@@ -375,7 +375,7 @@ def leans_on_relation(object1_id, object2_id, camera_id, scale_factor):
 
     # Step 2: ensure o₂ is neither above nor below o₁
     above_row = run_query(
-        conn, above_sql, (object2_id, object1_id, camera_id, scale_factor)
+        conn, above_sql, (object2_id, object1_id, camera_id, scale_factor, tolerance_metre)
     )[0]
     above_flag = above_row[3]
     rel_above  = above_row[4]
@@ -388,7 +388,7 @@ def leans_on_relation(object1_id, object2_id, camera_id, scale_factor):
         return relation_flag, "\n".join(explanation)
 
     below_row = run_query(
-        conn, below_sql, (object2_id, object1_id, camera_id, scale_factor)
+        conn, below_sql, (object2_id, object1_id, camera_id, scale_factor, tolerance_metre)
     )[0]
     below_flag = below_row[3]
     rel_below  = below_row[4]
@@ -453,7 +453,7 @@ def leans_on_relation(object1_id, object2_id, camera_id, scale_factor):
 
 
 #OPTIMIED VERSION 
-def affixed_to_relation(object1_id, object2_id, camera_id, scale_factor):
+def affixed_to_relation(object1_id, object2_id, camera_id, scale_factor, tolerance_metre= 0.3, near_far_threshold = 1):
     """
     Check if o2 affixed to o1
     AffixedTo(o₂,o₁,Fc) ⇔
@@ -482,7 +482,7 @@ def affixed_to_relation(object1_id, object2_id, camera_id, scale_factor):
     above_row = run_query(
         conn,
         above_sql,
-        (object1_id, object2_id, camera_id, scale_factor)
+        (object1_id, object2_id, camera_id, scale_factor, tolerance_metre)
     )[0]
     above_flag = above_row[3]
     rel_above  = above_row[4]

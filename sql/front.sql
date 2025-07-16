@@ -3,7 +3,8 @@
     CAST(%s AS INTEGER) AS object_x_id,
     CAST(%s AS INTEGER) AS object_y_id,
     CAST(%s AS INTEGER) AS camera_id,
-    CAST(%s AS NUMERIC) AS s
+    CAST(%s AS NUMERIC) AS s,     -- half-space scale factor
+    CAST(%s AS NUMERIC) AS tol    -- XY/Z padding tolerance
 ),
 -- 1. Camera
 cam AS (
@@ -35,7 +36,7 @@ obj_x_trans AS (
   CROSS JOIN cam
   CROSS JOIN rot
 ),
--- 5. Camera-space 2D envelope for X & Y limits
+-- 5. Camera‐space 2D envelope for X & Y limits
 obj_x_bbox AS (
   SELECT
     env2d,
@@ -49,16 +50,17 @@ obj_x_bbox AS (
     FROM obj_x_trans
   ) sub
 ),
--- 6. True Z-range of X in world-space, extended by a threshold
+-- 6. True Z‐range of X in world‐space, extended by tolerance
 obj_x_world_z AS (
   SELECT
-    ST_ZMin(bbox)        AS w_minz,
-    ST_ZMax(bbox)        AS w_maxz,
-    ST_ZMin(bbox) - 0.5  AS w_minz_ext,
-    ST_ZMax(bbox) + 0.5  AS w_maxz_ext
+    ST_ZMin(bbox)         AS w_minz,
+    ST_ZMax(bbox)         AS w_maxz,
+    ST_ZMin(bbox) - tol   AS w_minz_ext,
+    ST_ZMax(bbox) + tol   AS w_maxz_ext
   FROM obj_x_info
+  CROSS JOIN params
 ),
--- 7. Compute front-halfspace parameters, extending X-range by a threshold
+-- 7. Compute front‐halfspace parameters, extending X/Y by tolerance
 obj_x_metrics AS (
   SELECT
     fx.miny                                        AS front_y,
@@ -66,15 +68,17 @@ obj_x_metrics AS (
     (fx.miny - params.s * (fx.maxy - fx.miny))     AS threshold,
     fx.minx                                        AS minx,
     fx.maxx                                        AS maxx,
-    (fx.minx - 0.5)                                AS minx_ext,
-    (fx.maxx + 0.5)                                AS maxx_ext,
+    (fx.minx - params.tol)                         AS minx_ext,
+    (fx.maxx + params.tol)                         AS maxx_ext,
+    (fx.miny - params.tol)                         AS miny_ext,
+    (fx.maxy + params.tol)                         AS maxy_ext,
     wz.w_minz_ext,
     wz.w_maxz_ext
   FROM obj_x_bbox fx
-  CROSS JOIN params
   CROSS JOIN obj_x_world_z wz
+  CROSS JOIN params
 ),
--- 8. Transform Y into camera-space & dump its 3D points
+-- 8. Transform Y into camera‐space & dump its 3D points
 obj_y_points AS (
   SELECT dp.geom AS pt
   FROM (
@@ -90,7 +94,7 @@ obj_y_points AS (
   ) sub
   CROSS JOIN LATERAL ST_DumpPoints(sub.transformed_geom) AS dp
 ),
--- 9. Flag “in front” if ANY point lies in the extended 3D prism:
+-- 9. Flag “in front” if ANY point lies in the tolerance‐padded prism:
 --      Y ∈ [threshold, front_y]
 --  AND X ∈ [minx_ext, maxx_ext]
 --  AND Z ∈ [w_minz_ext, w_maxz_ext]

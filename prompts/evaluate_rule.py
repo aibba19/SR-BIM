@@ -1,5 +1,6 @@
 ﻿import json
 import re
+import logging
 from typing import List, Dict, Any
 
 from langchain_core.prompts import (
@@ -7,6 +8,8 @@ from langchain_core.prompts import (
     SystemMessagePromptTemplate,
     HumanMessagePromptTemplate,
 )
+
+logger = logging.getLogger(__name__)
 
 def evaluate_rule(
     rule: str,
@@ -19,79 +22,55 @@ def evaluate_rule(
 
     Returns:
       {
-        "entry_results": [{"summary":..., "compliant": true|false|null, "explanation":...}, ...],
+        "entry_results": [...],
         "overall_compliant": true|false,
         "overall_explanation": "..."
       }
+
+    Raises:
+      ValueError on JSON parse failure, including the raw content for debugging.
     """
     # Serialize summaries as bullet list
     summaries_md = "\n".join(f"- {s}" for s in summaries)
 
-    # Full task prompt (unchanged)
+    # (task_prompt / prompt_template creation unchanged) ...
     task_prompt = """
         <task_description>
-        You must judge whether a health-and-safety rule is met, using only the
-        spatial-query *summaries* provided.
+        Decide whether the health-and-safety <rule> is respected, using only the
+        bullet-list <summaries> of spatial results.
 
-        ● Each summary describes:
-           – which reference objects were tested,
-           – which other objects are (or are not) in specific spatial relations,
-           – and, by omission, which reference objects had **no matches** for the relation.
+        Instructions
+        1. For each summary:
+           • Explain in 1–2 sentences which reference objects (name + ID) and related
+             objects confirm, violate, or cast doubt on the rule.
+           • Note any uncertainties (unclear naming, role, or relation).
 
-        ● Treat every spatial result as geometrically correct, but you may question the
-          relevance of specific objects to the rule. If a match seems questionable or
-          misaligned with the rule intent, describe the issue.
+        2. Set "overall_compliant":
+           • true  – no violations and only minor doubts.
+           • false – any clear violation or significant doubt.
 
-        Instructions:
+        3. Write "overall_explanation": a single paragraph citing key objects (name + ID)
+           and relations that justify the verdict.
 
-        1. For **each** summary:
-           – Write a clear and concise **explanation** of what the summary shows in relation to
-             the rule. Describe:
-               • Which reference objects satisfy the condition,
-               • Which violate it,
-               • Which may be in doubt (and why: unclear naming, ambiguous role, etc.).
-           – When citing objects, always use both the **original name and ID** (e.g., `"Extg_03" (ID=107)`), especially when highlighting violations or unclear situations.
-           – Do **not** assign a compliance label per summary—just explain the relevant facts
-             in relation to the rule.
+        4. For door objects, consider them **closed** if ≥ 80% of their volume is
+            contained within the wall; while if it's less treat them as **open**.
 
-           The goal is to expose:
-             – violations (who breaks the rule, and how),
-             – satisfying cases (who is fine and why),
-             – uncertainties (who/what needs follow-up and why).
-
-        2. Use these explanations to give a final judgment:
-
-           "overall_compliant" is **true** only if no object violates the rule and all
-           ambiguities are minor or irrelevant.
-
-           In "overall_explanation", combine the evidence from the summaries. Cite object
-           **names and IDs** that cause violations or raise doubt, and explain why the rule
-           is or isn’t respected overall.
-
-        Return valid **JSON only**, in exactly this shape:
-
-        {{
+        Output – JSON only
+        {{  
           "entry_results": [
-            {{
-              "summary": "<original summary>",
-              "explanation": "<short reason>"
-            }},
-            …
+            {{ "summary": "<original summary>", "explanation": "<your explanation>" }}
           ],
           "overall_compliant": true | false,
-          "overall_explanation": "<Overall reason>"
+          "overall_explanation": "<your paragraph>"
         }}
+        Return nothing else (no markdown, code fences, or extra keys).
         </task_description>
         """
-
-    # Human message with inputs appended after the task description
     human_template = (
         f"{task_prompt}\n\n"
         "<rule>\n{rule}\n</rule>\n\n"
         "<summaries>\n{summaries_md}\n</summaries>"
     )
-
-    # Build prompt template
     prompt_template = ChatPromptTemplate(
         input_variables=["rule", "summaries_md"],
         messages=[
@@ -99,18 +78,42 @@ def evaluate_rule(
             HumanMessagePromptTemplate.from_template(human_template),
         ],
     )
-
-    # Render and invoke LLM
     rendered = prompt_template.format_prompt(
         rule=rule,
         summaries_md=summaries_md
     ).to_messages()
     result = client.invoke(rendered, model=model)
 
-    # Extract and clean output
+    # Clean markdown fences
     content = getattr(result, "content", str(result)).strip()
     if content.startswith("```"):
-        content = re.sub(r"```json\s*|\s*```", "", content, flags=re.IGNORECASE).strip()
+        content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content, flags=re.IGNORECASE | re.MULTILINE)
 
-    # Parse JSON and return
-    return json.loads(content)
+    # Try to parse, with fallback strategies
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as e:
+        logger.warning("Initial JSON parse failed: %s", e)
+
+        # 1) Extract the first { … } block
+        block_match = re.search(r"\{.*\}", content, flags=re.DOTALL)
+        if block_match:
+            candidate = block_match.group(0)
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError as e2:
+                logger.warning("Block‐extraction parse failed: %s", e2)
+
+        # 2) Strip trailing commas before } or ]
+        sanitized = re.sub(r",\s*([]}])", r"\1", content)
+        try:
+            return json.loads(sanitized)
+        except json.JSONDecodeError as e3:
+            logger.error("Sanitized parse failed: %s", e3)
+
+        # If we get here, give up with raw content for inspection
+        raise ValueError(
+            "Failed to parse JSON response from LLM.\n"
+            f"Original parse error: {e}\n"
+            f"Raw content was:\n{content}\n"
+        )
