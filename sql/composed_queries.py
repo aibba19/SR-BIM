@@ -263,16 +263,17 @@ def affixed_to_relation(object2_id, object1_id, scale_factor):
 
 '''
 
-def on_top_relation(object_x_id, object_y_id, camera_id, scale_factor, tolerance_metre= 0.3, near_far_threshold = 1):
+def on_top_relation(object_x_id, object_y_id, camera_id, scale_factor = 2, tolerance_metre=0.3, near_far_threshold=1):
     """
     Determines whether one object is on top of another by:
       1) checking 3D touches via touches.sql, and
       2) checking “above” via above.sql.
-    Returns a multi-line explanation with object IDs.
+    Returns a simple explanation:
+      - "Object X (ID:x) is on top of Object Y (ID:y)."
+      - or "No object is on top of the other."
     """
     relation_flag = 0
     conn = get_connection()
-    explanation = []
 
     # Load our SQL snippets
     touches_sql = load_query('touches.sql')
@@ -280,9 +281,6 @@ def on_top_relation(object_x_id, object_y_id, camera_id, scale_factor, tolerance
 
     # Step 1: does X touch Y?
     flag_xy = run_query(conn, touches_sql, (object_x_id, object_y_id))[0][0]
-    explanation.append(
-        f"Step 1: 3D-touches(oX={object_x_id}, oY={object_y_id}) => flag={flag_xy}"
-    )
     if flag_xy:
         # Step 2: if they touch, is X above Y?
         above_row = run_query(
@@ -290,27 +288,14 @@ def on_top_relation(object_x_id, object_y_id, camera_id, scale_factor, tolerance
             above_sql,
             (object_x_id, object_y_id, camera_id, scale_factor, tolerance_metre)
         )[0]
-        # above_row: [top_z, height, above_threshold, above_flag, relation]
         above_flag = above_row[3]
-        relation   = above_row[4]
 
-        explanation.append(
-            f"Step 2: above(oX={object_x_id}, oY={object_y_id}) => "
-            f"{relation} (above={above_flag})"
-        )
         if above_flag:
-            explanation.append(
-                f"Conclusion: Object X (ID={object_x_id}) is on top of Object Y (ID={object_y_id})."
-            )
-            relation_flag = 1
             conn.close()
-            return relation_flag, "\n".join(explanation)
+            return 1, f"Object X (ID:{object_y_id}) is on top of Object Y (ID:{object_x_id})."
 
     # Step 3: does Y touch X?
     flag_yx = run_query(conn, touches_sql, (object_y_id, object_x_id))[0][0]
-    explanation.append(
-        f"Step 3: 3D-touches(oY={object_y_id}, oX={object_x_id}) => flag={flag_yx}"
-    )
     if flag_yx:
         # Step 4: if they touch, is Y above X?
         above_row_rev = run_query(
@@ -319,27 +304,14 @@ def on_top_relation(object_x_id, object_y_id, camera_id, scale_factor, tolerance
             (object_y_id, object_x_id, camera_id, scale_factor, tolerance_metre)
         )[0]
         above_flag_rev = above_row_rev[3]
-        relation_rev   = above_row_rev[4]
 
-        explanation.append(
-            f"Step 4: above(oY={object_y_id}, oX={object_x_id}) => "
-            f"{relation_rev} (above={above_flag_rev})"
-        )
         if above_flag_rev:
-            explanation.append(
-                f"Conclusion: Object Y (ID={object_y_id}) is on top of Object X (ID={object_x_id})."
-            )
-            relation_flag = 1
             conn.close()
-            return relation_flag, "\n".join(explanation)
+            return 1, f"Object Y (ID:{object_x_id}) is on top of Object X (ID:{object_y_id})."
 
     # Neither orientation works
-    explanation.append(
-        "Conclusion: Neither object is on top of the other by the 'touches + above' criteria."
-    )
-    
     conn.close()
-    return relation_flag, "\n".join(explanation)
+    return 0, "No object is on top of the other."
 
 
 

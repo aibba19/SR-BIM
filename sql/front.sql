@@ -60,20 +60,24 @@ obj_x_world_z AS (
   FROM obj_x_info
   CROSS JOIN params
 ),
--- 7. Compute front‐halfspace parameters, extending X/Y by tolerance
+-- 7. Compute front‐halfspace parameters,
+--    extending X/Y by tol,
+--    and clamp Y-extrusion (s×depth) to at most 5.0 units
 obj_x_metrics AS (
   SELECT
-    fx.miny                                        AS front_y,
-    (fx.maxy - fx.miny)                            AS depth,
-    (fx.miny - params.s * (fx.maxy - fx.miny))     AS threshold,
-    fx.minx                                        AS minx,
-    fx.maxx                                        AS maxx,
-    (fx.minx - params.tol)                         AS minx_ext,
-    (fx.maxx + params.tol)                         AS maxx_ext,
-    (fx.miny - params.tol)                         AS miny_ext,
-    (fx.maxy + params.tol)                         AS maxy_ext,
-    wz.w_minz_ext,
-    wz.w_maxz_ext
+    fx.miny                                                                        AS front_y,
+    (fx.maxy - fx.miny)                                                            AS depth,
+    -- clamp the extrusion distance s * depth so it never exceeds 5.0
+    fx.miny
+    - LEAST(params.s * (fx.maxy - fx.miny), 5.0)                                   AS threshold,
+    fx.minx                                                                        AS minx,
+    fx.maxx                                                                        AS maxx,
+    (fx.minx - params.tol)                                                         AS minx_ext,
+    (fx.maxx + params.tol)                                                         AS maxx_ext,
+    (fx.miny - params.tol)                                                         AS miny_ext,
+    (fx.maxy + params.tol)                                                         AS maxy_ext,
+    wz.w_minz_ext                                                                  AS w_minz_ext,
+    wz.w_maxz_ext                                                                  AS w_maxz_ext
   FROM obj_x_bbox fx
   CROSS JOIN obj_x_world_z wz
   CROSS JOIN params
@@ -94,7 +98,7 @@ obj_y_points AS (
   ) sub
   CROSS JOIN LATERAL ST_DumpPoints(sub.transformed_geom) AS dp
 ),
--- 9. Flag “in front” if ANY point lies in the tolerance‐padded prism:
+-- 9. Flag “in front” if ANY point lies in the tolerance-padded, size-clamped prism:
 --      Y ∈ [threshold, front_y]
 --  AND X ∈ [minx_ext, maxx_ext]
 --  AND Z ∈ [w_minz_ext, w_maxz_ext]

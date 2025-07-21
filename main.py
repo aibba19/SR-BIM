@@ -225,7 +225,7 @@ class Evaluate_Hs_Rule:
             self.llm
         )
             '''
-        summaries = summarize_plan_results_to_list(state["spatial_plan"], state["relations"])
+        summaries = summarize_plan_results_to_list(state["spatial_plan"], state["relations"],state["udt_to_ids"],state["id_to_obj"])
         state["summaries"] = summaries
         return state
 
@@ -285,16 +285,17 @@ class Evaluate_Hs_Rule:
 if __name__ == "__main__":
     # ————— Define your checks ————— 
     rules = {
-   
       
-          "fall_check":          "Are there objects on the walkway ? ",
+        #TUTTE RIISOLTE CORRETTAMENTE
+     
+        "fall_check":  "Are there any objects on the walk path?"
         
     }
     
     # Define your parameters for the queries 
     pov_id = 1
     extrusion_factor_s = 2
-    tolerance_metre = 0.3
+    tolerance_metre = 0.2
     near_far_threshold = 1
 
     # Prepare output directory
@@ -367,7 +368,7 @@ if __name__ == "__main__":
         
 
         #Questa rende cose sbagliate 
-        "fall_check":          "Is the condition of all flooring free from trip hazards?", -> "Which objects placed on the floor could be considered potential trip hazards?"
+        "fall_check":          Are there any objects on the walk path? -- "Is the condition of all flooring free from trip hazards?", -> "Which objects placed on the floor could be considered potential trip hazards?"
         
         
                                                                                                         

@@ -68,16 +68,19 @@ obj_x_world_z AS (
   FROM obj_x_info
   CROSS JOIN params
 ),
--- 7. Compute left-halfspace parameters, Y-range also extended by tolerance
+-- 7. Compute left-halfspace parameters,
+--    Y-range extended by tol,
+--    clamp horizontal extrusion to at most 5.0 units
 obj_x_metrics AS (
   SELECT
-    minx                                     AS left_x,
-    (maxx - minx)                            AS width,
-    (minx - params.s * (maxx - minx))        AS left_threshold,
-    miny                                     AS miny,
-    maxy                                     AS maxy,
-    (miny - params.tol)                      AS miny_ext,
-    (maxy + params.tol)                      AS maxy_ext
+    minx                                               AS left_x,
+    (maxx - minx)                                      AS width,
+    -- limit s * width to <= 5.0 before subtracting from minx
+    minx - LEAST(params.s * (maxx - minx), 5.0)        AS left_threshold,
+    miny                                               AS miny,
+    maxy                                               AS maxy,
+    (miny - params.tol)                                AS miny_ext,
+    (maxy + params.tol)                                AS maxy_ext
   FROM obj_x_bbox
   CROSS JOIN params
 ),
@@ -97,7 +100,7 @@ obj_y_points AS (
   ) sub
   CROSS JOIN LATERAL ST_DumpPoints(sub.transformed_geom) AS dp
 ),
--- 9. Flag “left” if ANY point lies inside the extended 3D prism:
+-- 9. Flag “left” if ANY point lies inside the tolerance-padded, size-clamped prism:
 --      X ∈ [left_threshold, left_x]
 --  AND Y ∈ [miny_ext, maxy_ext]
 --  AND Z ∈ [w_minz_ext, w_maxz_ext]

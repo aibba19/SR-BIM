@@ -175,8 +175,8 @@ def run_spatial_call(
                 rows = run_template_query4(
                     conn,
                     template_paths[tpl_key],
-                    call["a_id"],                   # x_id (tested)
-                    call["b_id"],                   # y_id (reference)
+                    call["b_id"],                   # x_id (tested)
+                    call["a_id"],                   # Check if this object is above or below the other
                     call.get("camera_id", pov_id),
                     call.get("s", extrusion_factor_s),
                     call.get("tol", tolerance_metre)

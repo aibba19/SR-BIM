@@ -1,4 +1,5 @@
 ﻿import json
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from langchain_openai import ChatOpenAI
@@ -159,6 +160,7 @@ def execute_spatial_calls(
 
     # Build quick lookup from ID to (type,name)
     id_to_obj = {oid: (ifc, name) for oid, ifc, name in all_objects}
+    all_ids = [obj_id for obj_id, _, _ in all_objects]
 
     conn = get_connection()
     results: List[Dict] = []
@@ -172,6 +174,7 @@ def execute_spatial_calls(
             tpl_name = tmpl["template"]
             a_src, b_src = tmpl["a_source"], tmpl["b_source"]
 
+            
             # Expand reference IDs
             if a_src == "reference_ifc_types":
                 # flatten the lists of IDs for each UDT
@@ -197,6 +200,7 @@ def execute_spatial_calls(
                     if b_src == "against_ids"
                     else list(id_to_obj)
                 )
+            
 
             for a_id in a_ids:
                 a_type, a_name = id_to_obj[a_id]
@@ -380,118 +384,105 @@ def ids_from_udts(
 
 def summarize_plan_results_to_list(
     spatial_plan: Dict[str, Any],
-    results: List[Dict[str, Any]]
+    results: List[Dict[str, Any]],
+    udt_to_ids: Optional[Dict[str, List[int]]],
+    id_to_obj: Dict[int, Tuple[str, str]]
 ) -> List[str]:
     """
-    Optimized one-pass summarizer:
-      - Index results by (check_index, a_id, template)
-      - Index plan templates by check_index
-      - For each check_index and each a_id, build clauses via fast dict lookups
+    Produce compact, multi-line summaries grouped by plan and reference object.
+    - One block per plan, with a header.
+    - Under each header, one subsection per reference ID, listing each tested template
+      and its targets (or 'none').
+    - Special cases:
+      • 'contains': raw relation_value(s).
+      • 'on_top_of': parse relation_value to extract X/Y IDs and lookup names.
     """
-    # 1) Build result index: (check_index, a_id, template) → list of result dicts
-    idx: Dict[Tuple[int, int, str], List[Dict[str, Any]]] = defaultdict(list)
+    # Build plan map
+    plan_map = {e["check_index"]: e for e in spatial_plan.get("plans", [])}
+
+    # Index results by (check_index, a_id, template)
+    idx: Dict[Tuple[int,int,str], List[Dict[str,Any]]] = defaultdict(list)
     for r in results:
-        key = (r["check_index"], r["a_id"], r["template"])
-        idx[key].append(r)
-
-    # 2) Build plan-template map: check_index → list of templates
-    plan_templates: Dict[int, List[str]] = {
-        entry["check_index"]: [t["template"] for t in entry["templates"]]
-        for entry in spatial_plan.get("plans", [])
-    }
-
-    # Human-readable phrases
-    phrases: Dict[str, str] = {
-        "touches":    "touches",
-        "front":      "is in front of",
-        "behind":     "is behind",
-        "left":       "is to the left of",
-        "right":      "is to the right of",
-        "above":      "is above",
-        "below":      "is below",
-        "near":       "is near",
-        "far":        "is far from",
-        "on_top_of":  "is on top of",  # will be split into two clauses
-        "leans_on":   "leans on",
-        "affixed_to": "is affixed to",
-        "contains":   "contains",      # special: raw relation_value
-    }
+        idx[(r["check_index"], r["a_id"], r["template"])].append(r)
 
     summaries: List[str] = []
 
-    # 3) Identify all (check_index, a_id) pairs
-    check_to_aids: Dict[int, set] = defaultdict(set)
-    for (chk, aid, _), recs in idx.items():
-        check_to_aids[chk].add(aid)
+    for chk, plan in plan_map.items():
+        # 1) Header
+        rels = [t["template"] for t in plan["templates"]]
+        rels_str = ", ".join(rels)
+        rt = plan.get("relation_text", "")
+        against = plan["against"]
+        if against["type"] == "any":
+            against_desc = "any object instances"
+        else:
+            ag = against.get("against_ifc_types", [])
+            against_desc = ", ".join(ag) + " instances"
 
-    # 4) Build summaries
-    for chk, a_ids in check_to_aids.items():
-        templates = plan_templates.get(chk, [])
+        header = f"Plan {chk} (\"{rt}\"): tested [{rels_str}] against {against_desc}"
+
+        # 2) Reference IDs
+        if plan["reference"]["type"] == "any" or udt_to_ids is None:
+            a_ids = {r["a_id"] for r in results if r["check_index"] == chk}
+        else:
+            a_ids = set()
+            for udt in plan["reference"]["reference_ifc_types"]:
+                a_ids.update(udt_to_ids.get(udt, []))
+
+        # 3) Build lines for this plan
+        lines = [header]
         for a_id in sorted(a_ids):
-            # -- find a_name by scanning any result for this (chk, a_id)
-            a_name = next(
-                r["a_name"]
-                for r in results
-                if r["check_index"] == chk and r["a_id"] == a_id
-            )
-
-            clauses: List[str] = []
-
-            for tpl in templates:
+            a_name = id_to_obj[a_id][1]
+            lines.append(f"  • {a_name} (ID:{a_id}):")
+            for tpl in rels:
                 recs = idx.get((chk, a_id, tpl), [])
 
-                # Special: contains → raw relation_value
+                # contains: raw
                 if tpl == "contains":
                     if recs:
-                        rv = "; ".join(r["relation_value"] for r in recs)
-                        clauses.append(rv)
+                        for r in recs:
+                            lines.append(f"      – contains: {r['relation_value']}")
                     else:
-                        clauses.append("contains no object")
+                        lines.append(f"      – contains: none")
                     continue
 
-                # Special: on_top_of → two directional clauses
+                # on_top_of: parse IDs and lookup names
                 if tpl == "on_top_of":
-                    atop: List[str] = []
-                    beneath: List[str] = []
-                    for r in recs:
-                        rv = r["relation_value"]
-                        if f"(ID:{a_id}) is on top of" in rv:
-                            atop.append(r["b_name"])
-                        else:
-                            beneath.append(r["b_name"])
-                    # build atop clause
-                    if atop:
-                        part = ", ".join(atop[:-1]) + " and " + atop[-1] if len(atop) > 1 else atop[0]
-                        clauses.append(f"is on top of {part}")
+                    if recs:
+                        for r in recs:
+                            rv = r["relation_value"]
+                            ids = re.findall(r"ID[:=] *(\d+)", rv)
+                            if len(ids) >= 2:
+                                x, y = map(int, ids[:2])
+                                xn = id_to_obj[x][1]
+                                yn = id_to_obj[y][1]
+                                lines.append(
+                                    f"      – on_top_of: {xn} (ID:{x}) is on top of {yn} (ID:{y})"
+                                )
+                            else:
+                                lines.append(f"      – on_top_of: {rv}")
                     else:
-                        clauses.append("is on top of no object")
-                    # build beneath clause
-                    if beneath:
-                        part = ", ".join(beneath[:-1]) + " and " + beneath[-1] if len(beneath) > 1 else beneath[0]
-                        clauses.append(f"has on top of it {part}")
-                    else:
-                        clauses.append("has on top of it no object")
+                        lines.append(f"      – on_top_of: none")
                     continue
 
-                # Normal relation templates
+                # other templates
                 if recs:
-                    b_names = [r["b_name"] for r in recs]
-                    if len(b_names) > 1:
-                        part = ", ".join(b_names[:-1]) + " and " + b_names[-1]
-                    else:
-                        part = b_names[0]
-                    clauses.append(f"{phrases.get(tpl, tpl)} {part}")
+                    targets = [
+                        f"{r['b_name']} (ID:{r['b_id']})"
+                        for r in recs
+                    ]
+                    part = ", ".join(targets)
                 else:
-                    clauses.append(f"{phrases.get(tpl, tpl)} no object")
+                    part = "none"
 
-            # Compose summary for this (chk, a_id)
-            if clauses:
-                head = f"For Object {a_name} (ID:{a_id}) we found that it {clauses[0]}"
-                tail = "".join(f"; and it {c}" for c in clauses[1:])
-                summary = head + tail + "."
-            else:
-                summary = f"For Object {a_name} (ID:{a_id}) no templates tested."
+                lines.append(f"      – {tpl}: {part}")
 
-            summaries.append(summary)
+        # 4) append one block
+        summaries.append("\n".join(lines))
 
     return summaries
+
+
+
+
+

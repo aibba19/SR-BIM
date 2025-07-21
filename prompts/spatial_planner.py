@@ -33,54 +33,57 @@ def spatial_planner(
     # Task description (system message)
     # Task description (system message)
     base_prompt = """
-        <task>
-        You will decide which template relations must be run for each check.
+    <task>
+    You will decide which template relations must be run for each check.
 
-        Input
-          • <checks_json>: result of the previous step (reference, against, relation,
-            plus resolved IDs or IFC types).
-          • <template_catalogue>: list of available 1-to-1 template predicates.
+    Input
+      • <checks_json>: result of the previous step (reference, against, relation,
+        plus resolved IDs or IFC types).
+      • <template_catalogue>: list of available 1-to-1 template predicates.
 
-        Rules
-          1. Use only **templates** for every relation.
-             Example: to test "unobstructed_by" or visibility related to an object, run "touches", then
-             "front/right/left/behind/above/below".
+    Rules
+      1. Use only **templates** for every relation.
 
-             to test if a door it's open check containment against walls.
-             To check if there is object on ifc spaces just check on top relation
+      2.  Example:  If and only if we have to test "unobstructed_by" or "visibility" related to an object, run "touches", then
+         "front/right/left/behind/above/below".
 
-          2. When "against" or "reference" has "type":"any", indicate
-               "b_source": "any_nearby"   or "a_source": "any_nearby"
-             meaning the template will be executed later against *every* object found
-             near the reference object.
-          3. Preserve the order of checks.  Add a "check_index" so downstream code
-             can align plan ↔ check.
-          4. Return valid JSON **exactly** in the schema below.  No markdown.
-          5. For each plan entry, include a field `"relation_text"` containing the
-             original natural-language relation from the check (the value of the
-             `"relation"` property).
+         If and only if we have to test if a door it's open check containment against walls.
+         If and only if we have to test if there is object on another just check "on top" relation
 
-        Output schema
+      2. When "against" or "reference" has "type":"any", indicate
+           "b_source": "any_nearby"   or "a_source": "any_nearby"
+         meaning the template will be executed later against *every* object found
+         near the reference object.
+      3. Preserve the order of checks.  Add a "check_index" so downstream code
+         can align plan ↔ check.
+      4. Return valid JSON **exactly** in the schema below.  No markdown.
+      5. For each plan entry, include a field "relation_text" containing the
+         original natural-language relation from the check (the value of the
+         "relation" property).
+      6. Always include some relations
+
+    Output schema
+    {{
+      "plans": [
         {{
-          "plans": [
+          "check_index": <int>,
+          "reference": {{ ... same as input ... }},
+          "against"  : {{ ... same as input ... }},
+          "templates": [
             {{
-              "check_index": <int>,
-              "reference": {{ ... same as input ... }},
-              "against"  : {{ ... same as input ... }},
-              "templates": [
-                {{
-                  "template": "<template-name>",
-                  "a_source": "reference_ids|reference_ifc_types|any_nearby",
-                  "b_source": "against_ids|against_ifc_types|any_nearby"
-                }},
-                ...
-              ]
+              "template": "<template-name>",
+              "a_source": "reference_ids|reference_ifc_types|any_nearby",
+              "b_source": "against_ids|against_ifc_types|any_nearby"
             }},
             ...
           ]
-        }}
-        </task>
-        """
+        }},
+        ...
+      ]
+    }}
+    </task>
+    """
+
     '''
         General guidance: When trying to understand **where an object is placed** or **how it relates spatially to others**, 
                it is often necessary to test **multiple spatial relations** to capture the full 
@@ -122,3 +125,6 @@ def spatial_planner(
         # Attempt simple cleanup
         cleaned = re.sub(r",\s*(?P<closing>[\]\}])", r"\g<closing>", content)
         return json.loads(cleaned)
+
+
+    

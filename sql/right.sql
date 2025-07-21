@@ -68,12 +68,15 @@ obj_x_world_z AS (
   FROM obj_x_info
   CROSS JOIN params
 ),
--- 7. Compute "right" halfspace parameters, Y-range also extended by tolerance
+-- 7. Compute "right" halfspace parameters,
+--    Y-range extended by tol,
+--    clamp horizontal extrusion to at most 5.0 units
 obj_x_metrics AS (
   SELECT
     maxx                                           AS right_x,
     (maxx - minx)                                  AS width,
-    (maxx + params.s * (maxx - minx))              AS right_threshold,
+    -- limit s*(width) to <= 5.0 before adding to maxx
+    maxx + LEAST(params.s * (maxx - minx), 5.0)     AS right_threshold,
     miny                                           AS miny,
     maxy                                           AS maxy,
     (miny - params.tol)                            AS miny_ext,
@@ -97,7 +100,7 @@ obj_y_points AS (
   ) sub
   CROSS JOIN LATERAL ST_DumpPoints(sub.transformed_geom) AS dp
 ),
--- 9. Flag "right" if ANY point lies in the tolerance-padded prism:
+-- 9. Flag "right" if ANY point lies in the tolerance-padded, size-clamped prism:
 --      X ∈ [right_x, right_threshold]
 --  AND Y ∈ [miny_ext, maxy_ext]
 --  AND Z ∈ [w_minz_ext, w_maxz_ext]
