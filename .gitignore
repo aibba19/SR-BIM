@@ -31,3 +31,5 @@ ifc_types_names.txt
 *.bak
 *.tmp
 *~
+
+BIMtoPostGre/*.ifc
