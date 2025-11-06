@@ -95,7 +95,7 @@ class PipeState(TypedDict):
     enriched_checks: Optional[dict]
     spatial_plan: Optional[dict]
     relations: Optional[Any]
-    summaries: Optional[List[str]]
+    
     evaluation: Optional[dict]
 
 class Evaluate_Hs_Rule:
@@ -121,7 +121,9 @@ class Evaluate_Hs_Rule:
         workflow.add_node("plan relation to be run", self.spatial_plan)
         
         workflow.add_node("execute planned relations", self.execute_planned_relations)
-        workflow.add_node("summarise results", self.summarise_results)
+
+        #workflow.add_node("summarise results", self.summarise_results)
+
         workflow.add_node("evaluate results", self.evaluate_rule)
 
         workflow.add_edge(START,"load Database objects")
@@ -130,10 +132,11 @@ class Evaluate_Hs_Rule:
         workflow.add_edge("decompose rule", "match udts with rule entities")
         workflow.add_edge("match udts with rule entities", "plan relation to be run")
 
+       
         workflow.add_edge("plan relation to be run","execute planned relations")
 
-        workflow.add_edge("execute planned relations", "summarise results")
-        workflow.add_edge("summarise results", "evaluate results")
+        workflow.add_edge("execute planned relations","evaluate results" )
+        
         workflow.add_edge("evaluate results", END)
 
         self.workflow = workflow
@@ -216,22 +219,10 @@ class Evaluate_Hs_Rule:
         state["relations"] = relations
         return state
 
-    def summarise_results(self, state: PipeState) -> PipeState:
-        '''
-        summaries = summarise_spatial_results(
-            state.get("spatial_plan", {}),
-            state.get("relations", []),
-            self.llm
-        )
-            '''
-        summaries = summarize_plan_results_to_list(state["spatial_plan"], state["relations"],state["udt_to_ids"],state["id_to_obj"])
-        state["summaries"] = summaries
-        return state
-
     def evaluate_rule(self, state: PipeState) -> PipeState:
         evaluation = evaluate_rule(
             state["rule_text"],
-            state.get("summaries", []),
+            state.get("relations", []),
             self.llm
         )
         state["evaluation"] = evaluation
@@ -342,108 +333,59 @@ def main(gold_standard, pov_id=1, extrusion_factor_s=2, tolerance_metre=0.2, nea
     
 if __name__ == "__main__":
     # ————— Define your checks ————— 
-    # r2m_office gold standard E
+    # room2 gold standard D
     gold_standard = {
     "extinguisher_check1": {
         "rule_text": "Do furnishings or stored equipment obstruct easy access to fire extinguishing canisters?",
-        "overall_compliant": False,
-        "explanation_summary": "Rule is not compliant because extinguisher EX-3002:323069 (ID:109) is adjacent to chairs (ID:98, 99) on multiple sides, restricting access. Other extinguishers (IDs 1, 2, 3, 107) are unobstructed and compliant."
+        "overall_compliant": True,
+        "explanation_summary": "Rule is compliant because extinguishers (IDs 1, 2, 3) are not obstructed by any nearby stored items and are easily accessible."
     },
     "extinguisher_check2": {
         "rule_text": "Are all extinguishers either properly fixed to structural surfaces or resting on approved holders?",
-        "overall_compliant": False,
-        "explanation_summary": "Rule is not compliant because extinguishers EX-3002:323045 (ID:107) and EX-3002:323069 (ID:109) are not affixed to any wall—only touching floor and nearby objects. Others (IDs 1, 2, 3) are affixed and compliant."
+        "overall_compliant": True,
+        "explanation_summary": "Rule is compliant because extinguishers (IDs 1, 2, 3) are properly affixed to a wall or mounted on an appropriate stand."
     },
     "extinguisher_check3": {
         "rule_text": "Do the fire extinguishing tools display visible identification tags?",
-        "overall_compliant": False,
-        "explanation_summary": "Rule is not compliant because only extinguisher EX-3002:323036 (ID:1) is touching a label (ID:111); the others (IDs 2, 3, 107, 109) lack label contact, violating the rule."
+        "overall_compliant": True,
+        "explanation_summary": "Rule is compliant because extinguisher EX-3002:323036 (ID:1) is touching a label (ID:111), and extinguishers (IDs 2, 3) are also in contact with clearly visible labels."
     },
     "fire_call_check": {
         "rule_text": "Are fire emergency activation points clearly marked and not obstructed?",
-        "overall_compliant": False,
-        "explanation_summary": "Rule is not compliant because Fire Alarm Manual Call Point (ID:115) lacks signage; ID:113 is clearly signed and both are physically accessible, but missing signage for ID:115 causes violation."
+        "overall_compliant": True,
+        "explanation_summary": "Rule is compliant because both fire alarm call points (IDs 113 and 115) are clearly signed and physically accessible."
     },
     "fire_escape_check1": {
         "rule_text": "Are fire direction signs properly located and clearly visible at all times?",
-        "overall_compliant": True,
-        "explanation_summary": "Rule is compliant because Fire Exit Sign (ID:117) is correctly placed above fire exit doors (IDs 88, 18) and partially contained in/touching a wall (ID:52), meeting placement and visibility requirements."
+        "overall_compliant": False,
+        "explanation_summary": "Rule is not compliant because no fire exit sign is positioned correctly above the fire exit doors, failing visibility and placement requirements."
     },
     "door_check": {
         "rule_text": "Are all fire-resistance doors maintained in a fully shut position?",
-        "overall_compliant": False,
-        "explanation_summary": "Rule is not compliant because FireExitDoor2 (ID:132) is only 11.4–27.6% contained in its frame and wall, indicating it is wedged open. Door ID:18 is sufficiently contained and compliant."
+        "overall_compliant": True,
+        "explanation_summary": "Rule is compliant because Fire Door (ID:18) is sufficiently contained within its frame and surrounding wall, indicating it is closed."
     },
     "waste_check": {
         "rule_text": "Is trash stored in authorized containment zones?",
-        "overall_compliant": True,
-        "explanation_summary": "Rule is compliant because Waste bin (ID:10) is 21.9% contained within Trash Disposal Area (ID:118), which is sufficient for compliance."
+        "overall_compliant": False,
+        "explanation_summary": "Rule is not compliant because the Waste Bin (ID:10) is not properly placed within the designated Trash Disposal Area."
     },
     "ignition_check": {
         "rule_text": "Are fire-prone substances kept away from electrical sources?",
-        "overall_compliant": False,
-        "explanation_summary": "Rule is not compliant because Stock of Paper (ID:110), a combustible material, is near a 3 Phase Socket Outlet (ID:77), an ignition source. Other plants (IDs 100, 101) are safe."
+        "overall_compliant": True,
+        "explanation_summary": "Rule is compliant because the combustible materials, such as plants (IDs 100, 101), are not near any ignition sources."
     },
     "fire_escape_check2": {
         "rule_text": "Is the emergency egress doors kept clear of physical barriers?",
-        "overall_compliant": True,
-        "explanation_summary": "Rule is compliant because objects near FireExit_Door (ID:18, 132) do not block access; placement of extinguisher and HVAC device is acceptable and does not obstruct the route."
+        "overall_compliant": False,
+        "explanation_summary": "Rule is not compliant because a furnishing object (ID:98) is positioned directly in front of Fire Exit Door (ID:19), obstructing access, despite nearby extinguishers and HVAC devices not causing obstruction."
     },
     "fall_check": {
         "rule_text": "Are footpaths within the room free of any obstructions?",
-        "overall_compliant": False,
-        "explanation_summary": "Rule is not compliant because Fire Extinguisher (ID:107) is located on top of walkway1 (ID:119), representing clear violations."
+        "overall_compliant": True,
+        "explanation_summary": "Rule is compliant because no objects are located directly on the surface of walkway1 (ID:119), ensuring a clear walking path."
     }
 }
 
     
     main(gold_standard)
-    
-
-    
-    '''
-    # Render and save workflow visualization
-    graph = validator.chain.get_graph()
-    png_bytes = graph.draw_mermaid_png()
-    viz_path = Path(__file__).parent / "graph_workflow.png"
-    with open(viz_path, "wb") as viz_file:
-        viz_file.write(png_bytes)
-    print(f"DEBUG: Workflow diagram saved to {viz_path}")
-    '''
-    
-    
-    
-
-
-    # ──────────────────────────────────────────────────────────────────────────
-# 1.  Define the H&S checks you want to run
-# ──────────────────────────────────────────────────────────────────────────
-
-'''
-    
-    rules = {
-        
-        #TUTTE RIISOLTE CORRETTAMENTE
-        "extinguisher_check1": "Are all portable fire extinguishers readily accessible and not restricted by stored items?",
-        "extinguisher_check2": "Are portable fire extinguishers either securely wall mounted or on a supplied stand?",
-        "extinguisher_check3": "Are portable fire extinguishers clearly labelled?",
-        "fire_call_check": "Are all fire alarm call points clearly signed and easily accessible?",
-        "fire_escape_check1":  "Are fire exit signs installed at the proper locations and remain clearly visible?", 
-        "door_check":          "Are fire doors kept closed, i.e., not wedged open?",   
-        "waste_check":         "Is waste and rubbish kept in a designated area?",
-
-        "ignition_check":      "Have combustible materials been stored away from sources of ignition?", -> questa è giusta solo perchè ho messo le informazioni speiciiche nel prompt
-        "fire_escape_check2":  "Are fire escape routes kept clear?", -> Considering fire escape routes as fire exit doors not having obstruction it works (i wrote the instruction in the prompt)
-
-        #Corrette con qualche possibile misinterpretazione a volte
-        
-        
-
-        #Questa rende cose sbagliate 
-        "fall_check":          Are there any objects on the walk path? -- "Is the condition of all flooring free from trip hazards?", -> "Which objects placed on the floor could be considered potential trip hazards?"
-        
-        
-                                                                                                        
-    }
-
-    '''

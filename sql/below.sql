@@ -4,7 +4,7 @@
 --   2. object_y_id: The target object ID , therefore we are checking if y is below object x
 --   3. camera_id: The camera ID.
 --   4. s: The half-space scale factor.
---   5. tol: The XY/Z padding tolerance.
+--   5. tol: The padding tolerance.
 
 WITH params AS (
   SELECT
@@ -12,7 +12,7 @@ WITH params AS (
     CAST(%s AS INTEGER) AS object_y_id,
     CAST(%s AS INTEGER) AS camera_id,
     CAST(%s AS NUMERIC) AS s,     -- half-space scale factor
-    CAST(%s AS NUMERIC) AS tol    -- XY/Z padding tolerance
+    CAST(%s AS NUMERIC) AS tol    -- padding tolerance
 ),
 -- 1. Camera
 cam AS (

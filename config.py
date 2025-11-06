@@ -20,7 +20,7 @@ DB_CONFIG = {
 
 DB_CONFIG = {
     "host": "localhost",
-    "dbname": "r2m_office",
+    "dbname": "r2m_office", #"r2m_officeV2"
     "user": "postgres",
     "password": "burnout96",
     "port": 5432  # default PostgreSQL port

@@ -55,7 +55,7 @@ def extract_entities(
         • IfcElectricDistributionPoint are source of ignition
         • To check if there are trip hazard we have to use walkways as reference and any as against
         • Consider fire escape routes the fire exit doors
-
+        • Stored items are any non strcutural elements
         
 
         Constraints

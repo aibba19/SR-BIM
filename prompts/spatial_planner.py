@@ -49,6 +49,7 @@ def spatial_planner(
 
          If and only if we have to test if a door it's open check containment against walls.
          If and only if we have to test if there is object on another just check "on top" relation
+         If and only if we have to test if a walkway is free of trip hazard or uinobstructed by objectn check on top of relation.
 
       2. When "against" or "reference" has "type":"any", indicate
            "b_source": "any_nearby"   or "a_source": "any_nearby"

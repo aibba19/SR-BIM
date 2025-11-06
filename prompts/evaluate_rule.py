@@ -30,10 +30,41 @@ def evaluate_rule(
     Raises:
       ValueError on JSON parse failure, including the raw content for debugging.
     """
-    # Serialize summaries as bullet list
-    #summaries_md = "\n".join(f"- {s}" for s in summaries)
 
-    summaries_md = "\n\n".join("- " + block.replace("\n", "\n  ") for block in summaries)
+
+
+
+
+    def _block_from_item(item: Any) -> str:
+        """Normalize a summary item (str or dict) to a human-readable block string."""
+        if isinstance(item, str):
+            return item.strip()
+        if isinstance(item, dict):
+            # Pretty-print dicts deterministically; avoid escaping Unicode for readability
+            try:
+                return json.dumps(item, ensure_ascii=False, indent=2)
+            except Exception:
+                # Fallback if something inside the dict is not serializable
+                return str(item)
+        # Any other type, stringify safely
+        return str(item)
+
+    # Normalize every summary to a block, then format as:
+    # "- first line\n  indented continuation"
+    normalized_blocks = [_block_from_item(x) for x in summaries]
+    summaries_md = "\n\n".join("- " + block.replace("\n", "\n  ") for block in normalized_blocks)
+
+
+
+
+
+
+
+
+    # Serialize summaries as bullet list
+    #summaries_md = "\n\n".join("- " + block.replace("\n", "\n  ") for block in summaries)
+
+    #print(summaries_md)
 
     # (task_prompt / prompt_template creation unchanged) ...
     task_prompt = """
@@ -55,6 +86,11 @@ def evaluate_rule(
         7. If waste bin is contained for any percentage in a trash area this is sufficient.
         8. A fire escape route is kept clear if the object in relation with it are object that can logically be there. 
            But is not if there are other object that usually are not in spatial relation with doors.
+        9. If we are checking accessibility, easy to reach, or similar, the abscence of elements in relation with an object means that the object is accessibile from that direction.
+        10. Walkways are considered clear if they do not have any objects placed ONLY on top or above them. Objects above walkways create obstruction
+        11. A rule is compliant only if every applicable object satisfies every required clause in the rule’s logic (all AND-conditions and at least one of any OR-options); 
+            if even one object fails any mandatory clause, mark the entire rule non-compliant and cite the violators.
+        12. An object is correctly signed if it has a correct label in any spatial relation with it.
 
         Output – JSON only
         {{  

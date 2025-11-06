@@ -19,11 +19,24 @@ def get_openai_llm(model_name="gpt-4o-mini", api_key=None):
         openai_api_key=api_key or os.getenv("MY_OPENAI_KEY"),
     )
 
+def get_openrouter_llm(model_name="deepseek/deepseek-r1-0528:free", api_key="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"):
+    """Get an OpenRouter LLM instance."""
+    return ChatOpenAI(
+        model=model_name,
+        openai_api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
+        openai_api_base="https://openrouter.ai/api/v1",  # Custom base URL
+        #model_kwargs={"max_tokens": max_tokens},
+    )
+
 # Default LLM getter that can be modified based on preference
 def get_llm(model_name='gpt-4.1-mini-2025-04-14'):
     """Get the default LLM instance."""
     # Change this function to use your preferred LLM
+
     return get_openai_llm(model_name)
+
+    """Get the default LLM instance via OpenRouter."""
+    #return get_openrouter_llm(model_name, max_tokens= 20000)
 
 # Load promtp usin yaml file
 def load_prompt_by_name( target_name):
@@ -473,9 +486,13 @@ def summarize_plan_results_to_list(
                     ]
                     part = ", ".join(targets)
                 else:
-                    part = "none"
+                    part = "No relation with " + against_desc
 
-                lines.append(f"      – {tpl}: {part}")
+                # above and below: add "is" expliciting relation way 
+                if tpl in ["above", "below"]:
+                    lines.append(f"      – Is {tpl}: {part}")
+                else:
+                    lines.append(f"      – {tpl}: {part}")
 
         # 4) append one block
         summaries.append("\n".join(lines))
