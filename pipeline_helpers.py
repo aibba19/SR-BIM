@@ -19,11 +19,11 @@ def get_openai_llm(model_name="gpt-4o-mini", api_key=None):
         openai_api_key=api_key or os.getenv("MY_OPENAI_KEY"),
     )
 
-def get_openrouter_llm(model_name="deepseek/deepseek-r1-0528:free", api_key="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"):
+def get_openrouter_llm(model_name="deepseek/deepseek-r1-0528:free"):
     """Get an OpenRouter LLM instance."""
     return ChatOpenAI(
         model=model_name,
-        openai_api_key=api_key or os.getenv("OPENROUTER_API_KEY"),
+        openai_api_key= os.getenv("OPENROUTER_API_KEY"),
         openai_api_base="https://openrouter.ai/api/v1",  # Custom base URL
         #model_kwargs={"max_tokens": max_tokens},
     )
